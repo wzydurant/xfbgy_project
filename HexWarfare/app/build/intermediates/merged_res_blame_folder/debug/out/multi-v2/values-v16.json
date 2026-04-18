@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.hexwarfare.app-mergeDebugResources-52:/values-v16/values-v16.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\wzy\\.gradle\\caches\\transforms-3\\4ef2cba1dc3850cacf830bd81e3e6469\\transformed\\core-1.12.0\\res\\values-v16\\values-v16.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "65",
+                        "endOffsets": "116"
+                    }
+                }
+            ]
+        }
+    ]
+}
