@@ -6,13 +6,14 @@ package com.hexwarfare.app.domain.model
 enum class TerrainType(
     val moveCost: Int,
     val visionBonus: Int,
-    val defenseBonus: Int
+    val defenseBonus: Int,
+    val displayName: String
 ) {
-    PLAINS(1, 0, 0),      // 平原
-    MOUNTAIN(3, 2, 3),   // 山地
-    RIVER(2, 0, 0),      // 河流
-    BUILDING(1, 1, 2),   // 建筑群
-    IMPASSABLE(Int.MAX_VALUE, 0, 0); // 不可通行
+    PLAINS(1, 0, 0, "平原"),      // 平原
+    MOUNTAIN(3, 2, 3, "山地"),   // 山地
+    RIVER(2, 0, 0, "河流"),      // 河流
+    BUILDING(1, 1, 2, "建筑群"),   // 建筑群
+    IMPASSABLE(Int.MAX_VALUE, 0, 0, "不可通行"); // 不可通行
 
     fun canPass(): Boolean = this != IMPASSABLE
 }
