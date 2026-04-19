@@ -18,6 +18,7 @@ import com.hexwarfare.app.domain.model.GameMap
 import com.hexwarfare.app.domain.model.GameUnit
 import com.hexwarfare.app.domain.model.HexCoord
 import com.hexwarfare.app.domain.model.TerrainType
+import com.hexwarfare.app.domain.model.ZOCSystem
 import kotlin.math.sqrt
 
 /**
@@ -33,6 +34,7 @@ fun HexMapView(
     moveCosts: Map<HexCoord, Int> = emptyMap(),
     onTileClick: (HexCoord) -> Unit,
     onTileHover: ((HexCoord) -> Unit)? = null,
+    showZOC: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
@@ -61,6 +63,9 @@ fun HexMapView(
     val reachableColor = Color(0x4400FF00) // 半透明绿色
     val pathColor = Color(0xFFFF6B00) // 橙色路径
     val unitBorderColor = Color.White
+    // ZOC颜色
+    val playerZOCColor = Color(0x442196F3) // 半透明蓝色
+    val enemyZOCColor = Color(0x44F44336) // 半透明红色
 
     // 计算地图边界
     val mapBounds = remember(map) {
@@ -133,12 +138,40 @@ fun HexMapView(
         val currentScale = scale
         val currentOffset = offset
 
+        // 计算ZOC范围
+        val playerZOC = if (showZOC) {
+            units.filter { it.faction == Faction.PLAYER }.flatMap { ZOCSystem.getZOC范围(it) }.toSet()
+        } else emptySet()
+        val enemyZOC = if (showZOC) {
+            units.filter { it.faction == Faction.ENEMY }.flatMap { ZOCSystem.getZOC范围(it) }.toSet()
+        } else emptySet()
+
         // 绘制所有瓦片
         map.tiles.values.forEach { tile ->
             val (pixelX, pixelY) = hexToScreen(tile.coord, hexSize)
             val isSelected = tile.coord == selectedCoord
             val isHighlighted = tile.coord in highlightedCoords
             val isOnPath = tile.coord in pathCoords
+            val isPlayerZOC = tile.coord in playerZOC
+            val isEnemyZOC = tile.coord in enemyZOC
+
+            // 绘制ZOC（在地形和可达高亮之前）
+            if (isPlayerZOC || isEnemyZOC) {
+                val zocColor = when {
+                    isPlayerZOC && isEnemyZOC -> Color.Magenta // 双方ZOC重叠
+                    isPlayerZOC -> playerZOCColor
+                    else -> enemyZOCColor
+                }
+                drawHexTile(
+                    centerX = pixelX * currentScale + currentOffset.x,
+                    centerY = pixelY * currentScale + currentOffset.y,
+                    size = hexSize * currentScale,
+                    fillColor = zocColor,
+                    isSelected = false,
+                    selectedColor = Color.Transparent,
+                    strokeColor = Color.Transparent
+                )
+            }
 
             // 绘制可达高亮
             if (isHighlighted) {

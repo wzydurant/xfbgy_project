@@ -13,6 +13,9 @@ import androidx.compose.ui.text.style.TextAlign;
 import androidx.compose.ui.text.style.TextOverflow;
 import androidx.lifecycle.ViewModel;
 import com.hexwarfare.app.domain.model.CarriedEquipment;
+import com.hexwarfare.app.domain.model.CombatResult;
+import com.hexwarfare.app.domain.model.CombatType;
+import com.hexwarfare.app.domain.model.CombatEngine;
 import com.hexwarfare.app.domain.model.CommandRecord;
 import com.hexwarfare.app.domain.model.CommandSystem;
 import com.hexwarfare.app.domain.model.CommandType;
@@ -40,7 +43,7 @@ import javax.inject.Inject;
 /**
  * 游戏UI状态
  */
-@kotlin.Metadata(mv = {1, 9, 0}, k = 1, xi = 48, d1 = {"\u0000Z\n\u0002\u0018\u0002\n\u0002\u0010\u0000\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010 \n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010\"\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010$\n\u0002\u0010\b\n\u0002\b\u0003\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010\u000e\n\u0000\n\u0002\u0010\u000b\n\u0002\b\u0003\n\u0002\u0018\u0002\n\u0002\b6\b\u0086\b\u0018\u00002\u00020\u0001B\u00e1\u0001\u0012\n\b\u0002\u0010\u0002\u001a\u0004\u0018\u00010\u0003\u0012\n\b\u0002\u0010\u0004\u001a\u0004\u0018\u00010\u0005\u0012\n\b\u0002\u0010\u0006\u001a\u0004\u0018\u00010\u0007\u0012\u000e\b\u0002\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u0012\b\b\u0002\u0010\n\u001a\u00020\u000b\u0012\u000e\b\u0002\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r\u0012\u0014\b\u0002\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010\u0012\u000e\b\u0002\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t\u0012\b\b\u0002\u0010\u0013\u001a\u00020\u0011\u0012\u000e\b\u0002\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t\u0012\b\b\u0002\u0010\u0016\u001a\u00020\u0017\u0012\b\b\u0002\u0010\u0018\u001a\u00020\u0019\u0012\b\b\u0002\u0010\u001a\u001a\u00020\u0019\u0012\b\b\u0002\u0010\u001b\u001a\u00020\u0019\u0012\n\b\u0002\u0010\u001c\u001a\u0004\u0018\u00010\u001d\u0012\b\b\u0002\u0010\u001e\u001a\u00020\u0019\u0012\u000e\b\u0002\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u00a2\u0006\u0002\u0010 J\u000b\u0010=\u001a\u0004\u0018\u00010\u0003H\u00c6\u0003J\u000f\u0010>\u001a\b\u0012\u0004\u0012\u00020\u00150\tH\u00c6\u0003J\t\u0010?\u001a\u00020\u0017H\u00c6\u0003J\t\u0010@\u001a\u00020\u0019H\u00c6\u0003J\t\u0010A\u001a\u00020\u0019H\u00c6\u0003J\t\u0010B\u001a\u00020\u0019H\u00c6\u0003J\u000b\u0010C\u001a\u0004\u0018\u00010\u001dH\u00c6\u0003J\t\u0010D\u001a\u00020\u0019H\u00c6\u0003J\u000f\u0010E\u001a\b\u0012\u0004\u0012\u00020\u00050\tH\u00c6\u0003J\u000b\u0010F\u001a\u0004\u0018\u00010\u0005H\u00c6\u0003J\u000b\u0010G\u001a\u0004\u0018\u00010\u0007H\u00c6\u0003J\u000f\u0010H\u001a\b\u0012\u0004\u0012\u00020\u00050\tH\u00c6\u0003J\t\u0010I\u001a\u00020\u000bH\u00c6\u0003J\u000f\u0010J\u001a\b\u0012\u0004\u0012\u00020\u000e0\rH\u00c6\u0003J\u0015\u0010K\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010H\u00c6\u0003J\u000f\u0010L\u001a\b\u0012\u0004\u0012\u00020\u000e0\tH\u00c6\u0003J\t\u0010M\u001a\u00020\u0011H\u00c6\u0003J\u00e5\u0001\u0010N\u001a\u00020\u00002\n\b\u0002\u0010\u0002\u001a\u0004\u0018\u00010\u00032\n\b\u0002\u0010\u0004\u001a\u0004\u0018\u00010\u00052\n\b\u0002\u0010\u0006\u001a\u0004\u0018\u00010\u00072\u000e\b\u0002\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t2\b\b\u0002\u0010\n\u001a\u00020\u000b2\u000e\b\u0002\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r2\u0014\b\u0002\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u00102\u000e\b\u0002\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t2\b\b\u0002\u0010\u0013\u001a\u00020\u00112\u000e\b\u0002\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t2\b\b\u0002\u0010\u0016\u001a\u00020\u00172\b\b\u0002\u0010\u0018\u001a\u00020\u00192\b\b\u0002\u0010\u001a\u001a\u00020\u00192\b\b\u0002\u0010\u001b\u001a\u00020\u00192\n\b\u0002\u0010\u001c\u001a\u0004\u0018\u00010\u001d2\b\b\u0002\u0010\u001e\u001a\u00020\u00192\u000e\b\u0002\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\tH\u00c6\u0001J\u0013\u0010O\u001a\u00020\u00192\b\u0010P\u001a\u0004\u0018\u00010\u0001H\u00d6\u0003J\t\u0010Q\u001a\u00020\u0011H\u00d6\u0001J\t\u0010R\u001a\u00020\u0017H\u00d6\u0001R\u0017\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t\u00a2\u0006\b\n\u0000\u001a\u0004\b!\u0010\"R\u0011\u0010\u0013\u001a\u00020\u0011\u00a2\u0006\b\n\u0000\u001a\u0004\b#\u0010$R\u0011\u0010\n\u001a\u00020\u000b\u00a2\u0006\b\n\u0000\u001a\u0004\b%\u0010&R\u0013\u0010\u0002\u001a\u0004\u0018\u00010\u0003\u00a2\u0006\b\n\u0000\u001a\u0004\b\'\u0010(R\u0011\u0010\u0016\u001a\u00020\u0017\u00a2\u0006\b\n\u0000\u001a\u0004\b)\u0010*R\u001d\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010\u00a2\u0006\b\n\u0000\u001a\u0004\b+\u0010,R\u0017\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r\u00a2\u0006\b\n\u0000\u001a\u0004\b-\u0010.R\u0017\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t\u00a2\u0006\b\n\u0000\u001a\u0004\b/\u0010\"R\u0013\u0010\u0006\u001a\u0004\u0018\u00010\u0007\u00a2\u0006\b\n\u0000\u001a\u0004\b0\u00101R\u0013\u0010\u0004\u001a\u0004\u0018\u00010\u0005\u00a2\u0006\b\n\u0000\u001a\u0004\b2\u00103R\u0013\u0010\u001c\u001a\u0004\u0018\u00010\u001d\u00a2\u0006\b\n\u0000\u001a\u0004\b4\u00105R\u0011\u0010\u001b\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b6\u00107R\u0011\u0010\u0018\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b8\u00107R\u0011\u0010\u001a\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b9\u00107R\u0011\u0010\u001e\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b:\u00107R\u0017\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u00a2\u0006\b\n\u0000\u001a\u0004\b;\u0010\"R\u0017\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u00a2\u0006\b\n\u0000\u001a\u0004\b<\u0010\"\u00a8\u0006S"}, d2 = {"Lcom/hexwarfare/app/ui/screens/GameUiState;", "", "map", "Lcom/hexwarfare/app/domain/model/GameMap;", "selectedUnit", "Lcom/hexwarfare/app/domain/model/GameUnit;", "selectedTile", "Lcom/hexwarfare/app/domain/model/HexTile;", "units", "", "currentTurn", "Lcom/hexwarfare/app/domain/model/Turn;", "reachableTiles", "", "Lcom/hexwarfare/app/domain/model/HexCoord;", "moveCosts", "", "", "selectedPath", "commandQuotaLeft", "commandHistory", "Lcom/hexwarfare/app/domain/model/CommandRecord;", "message", "", "showStateChangeDialog", "", "showSupplyDialog", "showSettlementDialog", "settlementResult", "Lcom/hexwarfare/app/domain/model/SettlementResult;", "showUnitSelectionDialog", "unitsOnSelectedTile", "(Lcom/hexwarfare/app/domain/model/GameMap;Lcom/hexwarfare/app/domain/model/GameUnit;Lcom/hexwarfare/app/domain/model/HexTile;Ljava/util/List;Lcom/hexwarfare/app/domain/model/Turn;Ljava/util/Set;Ljava/util/Map;Ljava/util/List;ILjava/util/List;Ljava/lang/String;ZZZLcom/hexwarfare/app/domain/model/SettlementResult;ZLjava/util/List;)V", "getCommandHistory", "()Ljava/util/List;", "getCommandQuotaLeft", "()I", "getCurrentTurn", "()Lcom/hexwarfare/app/domain/model/Turn;", "getMap", "()Lcom/hexwarfare/app/domain/model/GameMap;", "getMessage", "()Ljava/lang/String;", "getMoveCosts", "()Ljava/util/Map;", "getReachableTiles", "()Ljava/util/Set;", "getSelectedPath", "getSelectedTile", "()Lcom/hexwarfare/app/domain/model/HexTile;", "getSelectedUnit", "()Lcom/hexwarfare/app/domain/model/GameUnit;", "getSettlementResult", "()Lcom/hexwarfare/app/domain/model/SettlementResult;", "getShowSettlementDialog", "()Z", "getShowStateChangeDialog", "getShowSupplyDialog", "getShowUnitSelectionDialog", "getUnits", "getUnitsOnSelectedTile", "component1", "component10", "component11", "component12", "component13", "component14", "component15", "component16", "component17", "component2", "component3", "component4", "component5", "component6", "component7", "component8", "component9", "copy", "equals", "other", "hashCode", "toString", "app_debug"})
+@kotlin.Metadata(mv = {1, 9, 0}, k = 1, xi = 48, d1 = {"\u0000b\n\u0002\u0018\u0002\n\u0002\u0010\u0000\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010 \n\u0000\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010\"\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010$\n\u0002\u0010\b\n\u0002\b\u0003\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010\u000e\n\u0000\n\u0002\u0010\u000b\n\u0002\b\u0003\n\u0002\u0018\u0002\n\u0002\b\u0005\n\u0002\u0018\u0002\n\u0002\b>\b\u0086\b\u0018\u00002\u00020\u0001B\u008d\u0002\u0012\n\b\u0002\u0010\u0002\u001a\u0004\u0018\u00010\u0003\u0012\n\b\u0002\u0010\u0004\u001a\u0004\u0018\u00010\u0005\u0012\n\b\u0002\u0010\u0006\u001a\u0004\u0018\u00010\u0007\u0012\u000e\b\u0002\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u0012\b\b\u0002\u0010\n\u001a\u00020\u000b\u0012\u000e\b\u0002\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r\u0012\u0014\b\u0002\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010\u0012\u000e\b\u0002\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t\u0012\b\b\u0002\u0010\u0013\u001a\u00020\u0011\u0012\u000e\b\u0002\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t\u0012\b\b\u0002\u0010\u0016\u001a\u00020\u0017\u0012\b\b\u0002\u0010\u0018\u001a\u00020\u0019\u0012\b\b\u0002\u0010\u001a\u001a\u00020\u0019\u0012\b\b\u0002\u0010\u001b\u001a\u00020\u0019\u0012\n\b\u0002\u0010\u001c\u001a\u0004\u0018\u00010\u001d\u0012\b\b\u0002\u0010\u001e\u001a\u00020\u0019\u0012\u000e\b\u0002\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u0012\b\b\u0002\u0010 \u001a\u00020\u0019\u0012\n\b\u0002\u0010!\u001a\u0004\u0018\u00010\u0005\u0012\n\b\u0002\u0010\"\u001a\u0004\u0018\u00010#\u0012\b\b\u0002\u0010$\u001a\u00020\u0019\u00a2\u0006\u0002\u0010%J\u000b\u0010G\u001a\u0004\u0018\u00010\u0003H\u00c6\u0003J\u000f\u0010H\u001a\b\u0012\u0004\u0012\u00020\u00150\tH\u00c6\u0003J\t\u0010I\u001a\u00020\u0017H\u00c6\u0003J\t\u0010J\u001a\u00020\u0019H\u00c6\u0003J\t\u0010K\u001a\u00020\u0019H\u00c6\u0003J\t\u0010L\u001a\u00020\u0019H\u00c6\u0003J\u000b\u0010M\u001a\u0004\u0018\u00010\u001dH\u00c6\u0003J\t\u0010N\u001a\u00020\u0019H\u00c6\u0003J\u000f\u0010O\u001a\b\u0012\u0004\u0012\u00020\u00050\tH\u00c6\u0003J\t\u0010P\u001a\u00020\u0019H\u00c6\u0003J\u000b\u0010Q\u001a\u0004\u0018\u00010\u0005H\u00c6\u0003J\u000b\u0010R\u001a\u0004\u0018\u00010\u0005H\u00c6\u0003J\u000b\u0010S\u001a\u0004\u0018\u00010#H\u00c6\u0003J\t\u0010T\u001a\u00020\u0019H\u00c6\u0003J\u000b\u0010U\u001a\u0004\u0018\u00010\u0007H\u00c6\u0003J\u000f\u0010V\u001a\b\u0012\u0004\u0012\u00020\u00050\tH\u00c6\u0003J\t\u0010W\u001a\u00020\u000bH\u00c6\u0003J\u000f\u0010X\u001a\b\u0012\u0004\u0012\u00020\u000e0\rH\u00c6\u0003J\u0015\u0010Y\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010H\u00c6\u0003J\u000f\u0010Z\u001a\b\u0012\u0004\u0012\u00020\u000e0\tH\u00c6\u0003J\t\u0010[\u001a\u00020\u0011H\u00c6\u0003J\u0091\u0002\u0010\\\u001a\u00020\u00002\n\b\u0002\u0010\u0002\u001a\u0004\u0018\u00010\u00032\n\b\u0002\u0010\u0004\u001a\u0004\u0018\u00010\u00052\n\b\u0002\u0010\u0006\u001a\u0004\u0018\u00010\u00072\u000e\b\u0002\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t2\b\b\u0002\u0010\n\u001a\u00020\u000b2\u000e\b\u0002\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r2\u0014\b\u0002\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u00102\u000e\b\u0002\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t2\b\b\u0002\u0010\u0013\u001a\u00020\u00112\u000e\b\u0002\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t2\b\b\u0002\u0010\u0016\u001a\u00020\u00172\b\b\u0002\u0010\u0018\u001a\u00020\u00192\b\b\u0002\u0010\u001a\u001a\u00020\u00192\b\b\u0002\u0010\u001b\u001a\u00020\u00192\n\b\u0002\u0010\u001c\u001a\u0004\u0018\u00010\u001d2\b\b\u0002\u0010\u001e\u001a\u00020\u00192\u000e\b\u0002\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\t2\b\b\u0002\u0010 \u001a\u00020\u00192\n\b\u0002\u0010!\u001a\u0004\u0018\u00010\u00052\n\b\u0002\u0010\"\u001a\u0004\u0018\u00010#2\b\b\u0002\u0010$\u001a\u00020\u0019H\u00c6\u0001J\u0013\u0010]\u001a\u00020\u00192\b\u0010^\u001a\u0004\u0018\u00010\u0001H\u00d6\u0003J\t\u0010_\u001a\u00020\u0011H\u00d6\u0001J\t\u0010`\u001a\u00020\u0017H\u00d6\u0001R\u0013\u0010!\u001a\u0004\u0018\u00010\u0005\u00a2\u0006\b\n\u0000\u001a\u0004\b&\u0010\'R\u0017\u0010\u0014\u001a\b\u0012\u0004\u0012\u00020\u00150\t\u00a2\u0006\b\n\u0000\u001a\u0004\b(\u0010)R\u0011\u0010\u0013\u001a\u00020\u0011\u00a2\u0006\b\n\u0000\u001a\u0004\b*\u0010+R\u0013\u0010\"\u001a\u0004\u0018\u00010#\u00a2\u0006\b\n\u0000\u001a\u0004\b,\u0010-R\u0011\u0010\n\u001a\u00020\u000b\u00a2\u0006\b\n\u0000\u001a\u0004\b.\u0010/R\u0013\u0010\u0002\u001a\u0004\u0018\u00010\u0003\u00a2\u0006\b\n\u0000\u001a\u0004\b0\u00101R\u0011\u0010\u0016\u001a\u00020\u0017\u00a2\u0006\b\n\u0000\u001a\u0004\b2\u00103R\u001d\u0010\u000f\u001a\u000e\u0012\u0004\u0012\u00020\u000e\u0012\u0004\u0012\u00020\u00110\u0010\u00a2\u0006\b\n\u0000\u001a\u0004\b4\u00105R\u0017\u0010\f\u001a\b\u0012\u0004\u0012\u00020\u000e0\r\u00a2\u0006\b\n\u0000\u001a\u0004\b6\u00107R\u0017\u0010\u0012\u001a\b\u0012\u0004\u0012\u00020\u000e0\t\u00a2\u0006\b\n\u0000\u001a\u0004\b8\u0010)R\u0013\u0010\u0006\u001a\u0004\u0018\u00010\u0007\u00a2\u0006\b\n\u0000\u001a\u0004\b9\u0010:R\u0013\u0010\u0004\u001a\u0004\u0018\u00010\u0005\u00a2\u0006\b\n\u0000\u001a\u0004\b;\u0010\'R\u0013\u0010\u001c\u001a\u0004\u0018\u00010\u001d\u00a2\u0006\b\n\u0000\u001a\u0004\b<\u0010=R\u0011\u0010 \u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b>\u0010?R\u0011\u0010$\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\b@\u0010?R\u0011\u0010\u001b\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\bA\u0010?R\u0011\u0010\u0018\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\bB\u0010?R\u0011\u0010\u001a\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\bC\u0010?R\u0011\u0010\u001e\u001a\u00020\u0019\u00a2\u0006\b\n\u0000\u001a\u0004\bD\u0010?R\u0017\u0010\b\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u00a2\u0006\b\n\u0000\u001a\u0004\bE\u0010)R\u0017\u0010\u001f\u001a\b\u0012\u0004\u0012\u00020\u00050\t\u00a2\u0006\b\n\u0000\u001a\u0004\bF\u0010)\u00a8\u0006a"}, d2 = {"Lcom/hexwarfare/app/ui/screens/GameUiState;", "", "map", "Lcom/hexwarfare/app/domain/model/GameMap;", "selectedUnit", "Lcom/hexwarfare/app/domain/model/GameUnit;", "selectedTile", "Lcom/hexwarfare/app/domain/model/HexTile;", "units", "", "currentTurn", "Lcom/hexwarfare/app/domain/model/Turn;", "reachableTiles", "", "Lcom/hexwarfare/app/domain/model/HexCoord;", "moveCosts", "", "", "selectedPath", "commandQuotaLeft", "commandHistory", "Lcom/hexwarfare/app/domain/model/CommandRecord;", "message", "", "showStateChangeDialog", "", "showSupplyDialog", "showSettlementDialog", "settlementResult", "Lcom/hexwarfare/app/domain/model/SettlementResult;", "showUnitSelectionDialog", "unitsOnSelectedTile", "showCombatOptionsDialog", "combatTarget", "currentCombatResult", "Lcom/hexwarfare/app/domain/model/CombatResult;", "showCombatResultDialog", "(Lcom/hexwarfare/app/domain/model/GameMap;Lcom/hexwarfare/app/domain/model/GameUnit;Lcom/hexwarfare/app/domain/model/HexTile;Ljava/util/List;Lcom/hexwarfare/app/domain/model/Turn;Ljava/util/Set;Ljava/util/Map;Ljava/util/List;ILjava/util/List;Ljava/lang/String;ZZZLcom/hexwarfare/app/domain/model/SettlementResult;ZLjava/util/List;ZLcom/hexwarfare/app/domain/model/GameUnit;Lcom/hexwarfare/app/domain/model/CombatResult;Z)V", "getCombatTarget", "()Lcom/hexwarfare/app/domain/model/GameUnit;", "getCommandHistory", "()Ljava/util/List;", "getCommandQuotaLeft", "()I", "getCurrentCombatResult", "()Lcom/hexwarfare/app/domain/model/CombatResult;", "getCurrentTurn", "()Lcom/hexwarfare/app/domain/model/Turn;", "getMap", "()Lcom/hexwarfare/app/domain/model/GameMap;", "getMessage", "()Ljava/lang/String;", "getMoveCosts", "()Ljava/util/Map;", "getReachableTiles", "()Ljava/util/Set;", "getSelectedPath", "getSelectedTile", "()Lcom/hexwarfare/app/domain/model/HexTile;", "getSelectedUnit", "getSettlementResult", "()Lcom/hexwarfare/app/domain/model/SettlementResult;", "getShowCombatOptionsDialog", "()Z", "getShowCombatResultDialog", "getShowSettlementDialog", "getShowStateChangeDialog", "getShowSupplyDialog", "getShowUnitSelectionDialog", "getUnits", "getUnitsOnSelectedTile", "component1", "component10", "component11", "component12", "component13", "component14", "component15", "component16", "component17", "component18", "component19", "component2", "component20", "component21", "component3", "component4", "component5", "component6", "component7", "component8", "component9", "copy", "equals", "other", "hashCode", "toString", "app_debug"})
 public final class GameUiState {
     @org.jetbrains.annotations.Nullable()
     private final com.hexwarfare.app.domain.model.GameMap map = null;
@@ -71,6 +74,12 @@ public final class GameUiState {
     private final boolean showUnitSelectionDialog = false;
     @org.jetbrains.annotations.NotNull()
     private final java.util.List<com.hexwarfare.app.domain.model.GameUnit> unitsOnSelectedTile = null;
+    private final boolean showCombatOptionsDialog = false;
+    @org.jetbrains.annotations.Nullable()
+    private final com.hexwarfare.app.domain.model.GameUnit combatTarget = null;
+    @org.jetbrains.annotations.Nullable()
+    private final com.hexwarfare.app.domain.model.CombatResult currentCombatResult = null;
+    private final boolean showCombatResultDialog = false;
     
     public GameUiState(@org.jetbrains.annotations.Nullable()
     com.hexwarfare.app.domain.model.GameMap map, @org.jetbrains.annotations.Nullable()
@@ -84,7 +93,9 @@ public final class GameUiState {
     java.util.List<com.hexwarfare.app.domain.model.CommandRecord> commandHistory, @org.jetbrains.annotations.NotNull()
     java.lang.String message, boolean showStateChangeDialog, boolean showSupplyDialog, boolean showSettlementDialog, @org.jetbrains.annotations.Nullable()
     com.hexwarfare.app.domain.model.SettlementResult settlementResult, boolean showUnitSelectionDialog, @org.jetbrains.annotations.NotNull()
-    java.util.List<com.hexwarfare.app.domain.model.GameUnit> unitsOnSelectedTile) {
+    java.util.List<com.hexwarfare.app.domain.model.GameUnit> unitsOnSelectedTile, boolean showCombatOptionsDialog, @org.jetbrains.annotations.Nullable()
+    com.hexwarfare.app.domain.model.GameUnit combatTarget, @org.jetbrains.annotations.Nullable()
+    com.hexwarfare.app.domain.model.CombatResult currentCombatResult, boolean showCombatResultDialog) {
         super();
     }
     
@@ -168,6 +179,24 @@ public final class GameUiState {
         return null;
     }
     
+    public final boolean getShowCombatOptionsDialog() {
+        return false;
+    }
+    
+    @org.jetbrains.annotations.Nullable()
+    public final com.hexwarfare.app.domain.model.GameUnit getCombatTarget() {
+        return null;
+    }
+    
+    @org.jetbrains.annotations.Nullable()
+    public final com.hexwarfare.app.domain.model.CombatResult getCurrentCombatResult() {
+        return null;
+    }
+    
+    public final boolean getShowCombatResultDialog() {
+        return false;
+    }
+    
     public GameUiState() {
         super();
     }
@@ -213,9 +242,27 @@ public final class GameUiState {
         return null;
     }
     
+    public final boolean component18() {
+        return false;
+    }
+    
+    @org.jetbrains.annotations.Nullable()
+    public final com.hexwarfare.app.domain.model.GameUnit component19() {
+        return null;
+    }
+    
     @org.jetbrains.annotations.Nullable()
     public final com.hexwarfare.app.domain.model.GameUnit component2() {
         return null;
+    }
+    
+    @org.jetbrains.annotations.Nullable()
+    public final com.hexwarfare.app.domain.model.CombatResult component20() {
+        return null;
+    }
+    
+    public final boolean component21() {
+        return false;
     }
     
     @org.jetbrains.annotations.Nullable()
@@ -265,7 +312,9 @@ public final class GameUiState {
     java.util.List<com.hexwarfare.app.domain.model.CommandRecord> commandHistory, @org.jetbrains.annotations.NotNull()
     java.lang.String message, boolean showStateChangeDialog, boolean showSupplyDialog, boolean showSettlementDialog, @org.jetbrains.annotations.Nullable()
     com.hexwarfare.app.domain.model.SettlementResult settlementResult, boolean showUnitSelectionDialog, @org.jetbrains.annotations.NotNull()
-    java.util.List<com.hexwarfare.app.domain.model.GameUnit> unitsOnSelectedTile) {
+    java.util.List<com.hexwarfare.app.domain.model.GameUnit> unitsOnSelectedTile, boolean showCombatOptionsDialog, @org.jetbrains.annotations.Nullable()
+    com.hexwarfare.app.domain.model.GameUnit combatTarget, @org.jetbrains.annotations.Nullable()
+    com.hexwarfare.app.domain.model.CombatResult currentCombatResult, boolean showCombatResultDialog) {
         return null;
     }
     

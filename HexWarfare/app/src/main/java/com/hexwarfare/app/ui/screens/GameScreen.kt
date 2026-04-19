@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import com.hexwarfare.app.domain.model.CarriedEquipment
+import com.hexwarfare.app.domain.model.CombatResult
+import com.hexwarfare.app.domain.model.CombatType
+import com.hexwarfare.app.domain.model.CombatEngine
 import com.hexwarfare.app.domain.model.CommandRecord
 import com.hexwarfare.app.domain.model.CommandSystem
 import com.hexwarfare.app.domain.model.CommandType
@@ -50,6 +53,8 @@ import com.hexwarfare.app.domain.model.Turn
 import com.hexwarfare.app.domain.model.TurnPhase
 import com.hexwarfare.app.domain.model.UnitSafety
 import com.hexwarfare.app.domain.model.UnitState
+import com.hexwarfare.app.domain.model.displayName
+import com.hexwarfare.app.ui.components.displayName as unitStateDisplayName
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -77,7 +82,12 @@ data class GameUiState(
     val showSettlementDialog: Boolean = false,
     val settlementResult: SettlementResult? = null,
     val showUnitSelectionDialog: Boolean = false,
-    val unitsOnSelectedTile: List<GameUnit> = emptyList()
+    val unitsOnSelectedTile: List<GameUnit> = emptyList(),
+    // 战斗相关状态
+    val showCombatOptionsDialog: Boolean = false,
+    val combatTarget: GameUnit? = null,
+    val currentCombatResult: CombatResult? = null,
+    val showCombatResultDialog: Boolean = false
 )
 
 @HiltViewModel
@@ -127,9 +137,60 @@ class GameViewModel @Inject constructor() : ViewModel() {
         } else if (_uiState.value.selectedUnit != null) {
             // 有已选中的单位，尝试移动
             if (coord in _uiState.value.reachableTiles) {
-                executeMove(coord)
+                // 检查目标格子是否有敌方单位
+                val enemyUnitsOnTarget = unitsOnTile.filter { it.faction != Faction.PLAYER }
+                if (enemyUnitsOnTarget.isNotEmpty()) {
+                    // 有敌方单位，显示战斗选项
+                    if (enemyUnitsOnTarget.size > 1) {
+                        // 多个敌方单位，弹出选择
+                        _uiState.update {
+                            it.copy(
+                                selectedTile = tile,
+                                showUnitSelectionDialog = true,
+                                unitsOnSelectedTile = enemyUnitsOnTarget
+                            )
+                        }
+                    } else {
+                        // 单个敌方单位，显示战斗选项
+                        showCombatOptions(enemyUnitsOnTarget.first())
+                    }
+                } else {
+                    executeMove(coord)
+                }
             } else {
-                // 清除选中状态，显示地块信息
+                // 检查是否点击了相邻的敌方单位（可以发起战斗）
+                val selectedUnit = _uiState.value.selectedUnit!!
+                val enemyUnitsNearby = unitsOnTile.filter { it.faction != Faction.PLAYER }
+                if (enemyUnitsNearby.isNotEmpty()) {
+                    // 选中的是相邻格子的敌方单位
+                    if (enemyUnitsNearby.size > 1) {
+                        _uiState.update {
+                            it.copy(
+                                selectedTile = tile,
+                                showUnitSelectionDialog = true,
+                                unitsOnSelectedTile = enemyUnitsNearby
+                            )
+                        }
+                    } else {
+                        showCombatOptions(enemyUnitsNearby.first())
+                    }
+                } else {
+                    // 清除选中状态，显示地块信息
+                    _uiState.update {
+                        it.copy(
+                            selectedTile = tile,
+                            selectedUnit = null,
+                            reachableTiles = emptySet(),
+                            moveCosts = emptyMap()
+                        )
+                    }
+                }
+            }
+        } else {
+            // 没有选中单位，检查是否点击了敌方单位
+            val enemyUnitsOnTile = unitsOnTile.filter { it.faction != Faction.PLAYER }
+            if (enemyUnitsOnTile.isNotEmpty()) {
+                // 显示敌方单位信息（暂时只显示地块信息）
                 _uiState.update {
                     it.copy(
                         selectedTile = tile,
@@ -138,16 +199,16 @@ class GameViewModel @Inject constructor() : ViewModel() {
                         moveCosts = emptyMap()
                     )
                 }
-            }
-        } else {
-            // 没有选中单位，显示地块信息
-            _uiState.update {
-                it.copy(
-                    selectedTile = tile,
-                    selectedUnit = null,
-                    reachableTiles = emptySet(),
-                    moveCosts = emptyMap()
-                )
+            } else {
+                // 没有选中单位，显示地块信息
+                _uiState.update {
+                    it.copy(
+                        selectedTile = tile,
+                        selectedUnit = null,
+                        reachableTiles = emptySet(),
+                        moveCosts = emptyMap()
+                    )
+                }
             }
         }
     }
@@ -342,6 +403,103 @@ class GameViewModel @Inject constructor() : ViewModel() {
                 message = "${unit.name} 切换为 ${newState.displayName}"
             )
         }
+    }
+
+    /**
+     * 显示战斗选项对话框
+     */
+    fun showCombatOptions(target: GameUnit) {
+        _uiState.update {
+            it.copy(
+                showCombatOptionsDialog = true,
+                combatTarget = target
+            )
+        }
+    }
+
+    /**
+     * 关闭战斗选项对话框
+     */
+    fun dismissCombatOptions() {
+        _uiState.update {
+            it.copy(
+                showCombatOptionsDialog = false,
+                combatTarget = null
+            )
+        }
+    }
+
+    /**
+     * 发起战斗
+     */
+    fun initiateCombat(combatType: CombatType) {
+        val attacker = _uiState.value.selectedUnit ?: return
+        val defender = _uiState.value.combatTarget ?: return
+
+        // 执行战斗计算
+        val result = CombatEngine.resolveCombat(attacker, defender, combatType)
+
+        // 应用战斗结果
+        val (updatedAttacker, updatedDefender) = CombatEngine.applyCombatResult(result)
+
+        // 更新单位状态
+        val updatedUnits = _uiState.value.units.map { unit ->
+            when (unit.id) {
+                updatedAttacker.id -> updatedAttacker
+                updatedDefender.id -> updatedDefender
+                else -> unit
+            }
+        }.filter { unit ->
+            // 移除被消灭的单位
+            !(unit.id == updatedDefender.id && (result.defenderEliminated || unit.personnelLevel == PersonnelLevel.LOW && unit.moraleLevel == MoraleLevel.BROKEN))
+        }
+
+        _uiState.update {
+            it.copy(
+                units = updatedUnits,
+                selectedUnit = if (updatedAttacker.id in updatedUnits.map { u -> u.id }) {
+                    updatedUnits.find { u -> u.id == updatedAttacker.id }
+                } else null,
+                showCombatOptionsDialog = false,
+                combatTarget = null,
+                currentCombatResult = result,
+                showCombatResultDialog = true,
+                message = "${attacker.name} 对 ${defender.name} 发起${combatType.displayName}！"
+            )
+        }
+    }
+
+    /**
+     * 获取可用的战斗类型
+     */
+    fun getAvailableCombatTypes(attacker: GameUnit, defender: GameUnit): List<CombatType> {
+        val distance = attacker.coord.distanceTo(defender.coord)
+        return CombatType.entries.filter { it.isInRange(distance) }
+    }
+
+    /**
+     * 关闭战斗结果对话框
+     */
+    fun dismissCombatResult() {
+        _uiState.update {
+            it.copy(
+                showCombatResultDialog = false,
+                currentCombatResult = null
+            )
+        }
+    }
+
+    /**
+     * 从对话框选择一个敌方单位进行战斗
+     */
+    fun selectEnemyForCombat(unit: GameUnit) {
+        _uiState.update {
+            it.copy(
+                showUnitSelectionDialog = false,
+                unitsOnSelectedTile = emptyList()
+            )
+        }
+        showCombatOptions(unit)
     }
 
     /**
@@ -698,7 +856,13 @@ fun GameScreen(
     if (uiState.showUnitSelectionDialog) {
         UnitSelectionDialog(
             units = uiState.unitsOnSelectedTile,
-            onUnitSelected = { viewModel.selectUnitFromTile(it) },
+            onUnitSelected = { unit ->
+                if (unit.faction == Faction.PLAYER) {
+                    viewModel.selectUnitFromTile(unit)
+                } else {
+                    viewModel.selectEnemyForCombat(unit)
+                }
+            },
             onDismiss = { viewModel.dismissUnitSelectionDialog() }
         )
     }
@@ -709,6 +873,31 @@ fun GameScreen(
             result = uiState.settlementResult,
             units = uiState.units,
             onDismiss = { viewModel.dismissSettlementDialog() }
+        )
+    }
+
+    // 战斗选项对话框
+    val showCombatOptions = uiState.showCombatOptionsDialog
+    val selectedUnit = uiState.selectedUnit
+    val combatTarget = uiState.combatTarget
+    if (showCombatOptions && selectedUnit != null && combatTarget != null) {
+        val availableCombats = viewModel.getAvailableCombatTypes(selectedUnit, combatTarget)
+        com.hexwarfare.app.ui.components.CombatOptionsDialog(
+            attacker = selectedUnit,
+            defender = combatTarget,
+            availableCombats = availableCombats,
+            onCombatSelected = { combatType -> viewModel.initiateCombat(combatType) },
+            onDismiss = { viewModel.dismissCombatOptions() }
+        )
+    }
+
+    // 战斗结果对话框
+    val showCombatResult = uiState.showCombatResultDialog
+    val combatResult = uiState.currentCombatResult
+    if (showCombatResult && combatResult != null) {
+        com.hexwarfare.app.ui.components.CombatResultDialog(
+            result = combatResult,
+            onDismiss = { viewModel.dismissCombatResult() }
         )
     }
 }

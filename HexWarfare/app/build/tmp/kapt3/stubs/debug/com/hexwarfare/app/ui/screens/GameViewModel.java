@@ -13,6 +13,9 @@ import androidx.compose.ui.text.style.TextAlign;
 import androidx.compose.ui.text.style.TextOverflow;
 import androidx.lifecycle.ViewModel;
 import com.hexwarfare.app.domain.model.CarriedEquipment;
+import com.hexwarfare.app.domain.model.CombatResult;
+import com.hexwarfare.app.domain.model.CombatType;
+import com.hexwarfare.app.domain.model.CombatEngine;
 import com.hexwarfare.app.domain.model.CommandRecord;
 import com.hexwarfare.app.domain.model.CommandSystem;
 import com.hexwarfare.app.domain.model.CommandType;
@@ -37,7 +40,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel;
 import kotlinx.coroutines.flow.StateFlow;
 import javax.inject.Inject;
 
-@kotlin.Metadata(mv = {1, 9, 0}, k = 1, xi = 48, d1 = {"\u0000N\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\u0003\n\u0002\u0010\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010 \n\u0002\u0018\u0002\n\u0002\b\u0005\n\u0002\u0018\u0002\n\u0002\b\u0005\n\u0002\u0018\u0002\n\u0002\b\u0006\b\u0007\u0018\u00002\u00020\u0001B\u0007\b\u0007\u00a2\u0006\u0002\u0010\u0002J\u000e\u0010\n\u001a\u00020\u000b2\u0006\u0010\f\u001a\u00020\rJ\u0006\u0010\u000e\u001a\u00020\u000bJ\b\u0010\u000f\u001a\u00020\u0010H\u0002J\u000e\u0010\u0011\u001a\b\u0012\u0004\u0012\u00020\u00130\u0012H\u0002J\u0006\u0010\u0014\u001a\u00020\u000bJ\u0006\u0010\u0015\u001a\u00020\u000bJ\u0006\u0010\u0016\u001a\u00020\u000bJ\u0010\u0010\u0017\u001a\u00020\u000b2\u0006\u0010\u0018\u001a\u00020\u0019H\u0002J\b\u0010\u001a\u001a\u00020\u000bH\u0002J\u0006\u0010\u001b\u001a\u00020\u000bJ\u000e\u0010\u001c\u001a\u00020\u000b2\u0006\u0010\u001d\u001a\u00020\u0019J\b\u0010\u001e\u001a\u00020\u001fH\u0002J\u000e\u0010 \u001a\u00020\u000b2\u0006\u0010\u001d\u001a\u00020\u0019J\u0010\u0010!\u001a\u00020\u000b2\u0006\u0010\"\u001a\u00020\u0013H\u0002J\u000e\u0010#\u001a\u00020\u000b2\u0006\u0010\"\u001a\u00020\u0013J\u0006\u0010$\u001a\u00020\u000bR\u0014\u0010\u0003\u001a\b\u0012\u0004\u0012\u00020\u00050\u0004X\u0082\u0004\u00a2\u0006\u0002\n\u0000R\u0017\u0010\u0006\u001a\b\u0012\u0004\u0012\u00020\u00050\u0007\u00a2\u0006\b\n\u0000\u001a\u0004\b\b\u0010\t\u00a8\u0006%"}, d2 = {"Lcom/hexwarfare/app/ui/screens/GameViewModel;", "Landroidx/lifecycle/ViewModel;", "()V", "_uiState", "Lkotlinx/coroutines/flow/MutableStateFlow;", "Lcom/hexwarfare/app/ui/screens/GameUiState;", "uiState", "Lkotlinx/coroutines/flow/StateFlow;", "getUiState", "()Lkotlinx/coroutines/flow/StateFlow;", "changeUnitState", "", "newState", "Lcom/hexwarfare/app/domain/model/UnitState;", "clearSelection", "createSampleMap", "Lcom/hexwarfare/app/domain/model/GameMap;", "createSampleUnits", "", "Lcom/hexwarfare/app/domain/model/GameUnit;", "dismissSettlementDialog", "dismissStateChangeDialog", "dismissUnitSelectionDialog", "executeMove", "targetCoord", "Lcom/hexwarfare/app/domain/model/HexCoord;", "loadMap", "nextPhase", "previewMove", "coord", "processSettlement", "Lcom/hexwarfare/app/domain/model/SettlementResult;", "selectTile", "selectUnit", "unit", "selectUnitFromTile", "showStateChangeDialog", "app_debug"})
+@kotlin.Metadata(mv = {1, 9, 0}, k = 1, xi = 48, d1 = {"\u0000T\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\u0003\n\u0002\u0010\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0000\n\u0002\u0010 \n\u0002\u0018\u0002\n\u0002\b\u0007\n\u0002\u0018\u0002\n\u0000\n\u0002\u0018\u0002\n\u0002\b\t\n\u0002\u0018\u0002\n\u0002\b\t\b\u0007\u0018\u00002\u00020\u0001B\u0007\b\u0007\u00a2\u0006\u0002\u0010\u0002J\u000e\u0010\n\u001a\u00020\u000b2\u0006\u0010\f\u001a\u00020\rJ\u0006\u0010\u000e\u001a\u00020\u000bJ\b\u0010\u000f\u001a\u00020\u0010H\u0002J\u000e\u0010\u0011\u001a\b\u0012\u0004\u0012\u00020\u00130\u0012H\u0002J\u0006\u0010\u0014\u001a\u00020\u000bJ\u0006\u0010\u0015\u001a\u00020\u000bJ\u0006\u0010\u0016\u001a\u00020\u000bJ\u0006\u0010\u0017\u001a\u00020\u000bJ\u0006\u0010\u0018\u001a\u00020\u000bJ\u0010\u0010\u0019\u001a\u00020\u000b2\u0006\u0010\u001a\u001a\u00020\u001bH\u0002J\u001c\u0010\u001c\u001a\b\u0012\u0004\u0012\u00020\u001d0\u00122\u0006\u0010\u001e\u001a\u00020\u00132\u0006\u0010\u001f\u001a\u00020\u0013J\u000e\u0010 \u001a\u00020\u000b2\u0006\u0010!\u001a\u00020\u001dJ\b\u0010\"\u001a\u00020\u000bH\u0002J\u0006\u0010#\u001a\u00020\u000bJ\u000e\u0010$\u001a\u00020\u000b2\u0006\u0010%\u001a\u00020\u001bJ\b\u0010&\u001a\u00020\'H\u0002J\u000e\u0010(\u001a\u00020\u000b2\u0006\u0010)\u001a\u00020\u0013J\u000e\u0010*\u001a\u00020\u000b2\u0006\u0010%\u001a\u00020\u001bJ\u0010\u0010+\u001a\u00020\u000b2\u0006\u0010)\u001a\u00020\u0013H\u0002J\u000e\u0010,\u001a\u00020\u000b2\u0006\u0010)\u001a\u00020\u0013J\u000e\u0010-\u001a\u00020\u000b2\u0006\u0010.\u001a\u00020\u0013J\u0006\u0010/\u001a\u00020\u000bR\u0014\u0010\u0003\u001a\b\u0012\u0004\u0012\u00020\u00050\u0004X\u0082\u0004\u00a2\u0006\u0002\n\u0000R\u0017\u0010\u0006\u001a\b\u0012\u0004\u0012\u00020\u00050\u0007\u00a2\u0006\b\n\u0000\u001a\u0004\b\b\u0010\t\u00a8\u00060"}, d2 = {"Lcom/hexwarfare/app/ui/screens/GameViewModel;", "Landroidx/lifecycle/ViewModel;", "()V", "_uiState", "Lkotlinx/coroutines/flow/MutableStateFlow;", "Lcom/hexwarfare/app/ui/screens/GameUiState;", "uiState", "Lkotlinx/coroutines/flow/StateFlow;", "getUiState", "()Lkotlinx/coroutines/flow/StateFlow;", "changeUnitState", "", "newState", "Lcom/hexwarfare/app/domain/model/UnitState;", "clearSelection", "createSampleMap", "Lcom/hexwarfare/app/domain/model/GameMap;", "createSampleUnits", "", "Lcom/hexwarfare/app/domain/model/GameUnit;", "dismissCombatOptions", "dismissCombatResult", "dismissSettlementDialog", "dismissStateChangeDialog", "dismissUnitSelectionDialog", "executeMove", "targetCoord", "Lcom/hexwarfare/app/domain/model/HexCoord;", "getAvailableCombatTypes", "Lcom/hexwarfare/app/domain/model/CombatType;", "attacker", "defender", "initiateCombat", "combatType", "loadMap", "nextPhase", "previewMove", "coord", "processSettlement", "Lcom/hexwarfare/app/domain/model/SettlementResult;", "selectEnemyForCombat", "unit", "selectTile", "selectUnit", "selectUnitFromTile", "showCombatOptions", "target", "showStateChangeDialog", "app_debug"})
 @dagger.hilt.android.lifecycle.HiltViewModel()
 public final class GameViewModel extends androidx.lifecycle.ViewModel {
     @org.jetbrains.annotations.NotNull()
@@ -114,6 +117,49 @@ public final class GameViewModel extends androidx.lifecycle.ViewModel {
     
     public final void changeUnitState(@org.jetbrains.annotations.NotNull()
     com.hexwarfare.app.domain.model.UnitState newState) {
+    }
+    
+    /**
+     * 显示战斗选项对话框
+     */
+    public final void showCombatOptions(@org.jetbrains.annotations.NotNull()
+    com.hexwarfare.app.domain.model.GameUnit target) {
+    }
+    
+    /**
+     * 关闭战斗选项对话框
+     */
+    public final void dismissCombatOptions() {
+    }
+    
+    /**
+     * 发起战斗
+     */
+    public final void initiateCombat(@org.jetbrains.annotations.NotNull()
+    com.hexwarfare.app.domain.model.CombatType combatType) {
+    }
+    
+    /**
+     * 获取可用的战斗类型
+     */
+    @org.jetbrains.annotations.NotNull()
+    public final java.util.List<com.hexwarfare.app.domain.model.CombatType> getAvailableCombatTypes(@org.jetbrains.annotations.NotNull()
+    com.hexwarfare.app.domain.model.GameUnit attacker, @org.jetbrains.annotations.NotNull()
+    com.hexwarfare.app.domain.model.GameUnit defender) {
+        return null;
+    }
+    
+    /**
+     * 关闭战斗结果对话框
+     */
+    public final void dismissCombatResult() {
+    }
+    
+    /**
+     * 从对话框选择一个敌方单位进行战斗
+     */
+    public final void selectEnemyForCombat(@org.jetbrains.annotations.NotNull()
+    com.hexwarfare.app.domain.model.GameUnit unit) {
     }
     
     /**

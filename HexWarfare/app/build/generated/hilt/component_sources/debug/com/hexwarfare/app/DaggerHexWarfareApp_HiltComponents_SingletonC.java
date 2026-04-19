@@ -530,7 +530,7 @@ public final class DaggerHexWarfareApp_HiltComponents_SingletonC {
     }
 
     @Override
-    public void injectHexWarfareApp(HexWarfareApp hexWarfareApp) {
+    public void injectHexWarfareApp(HexWarfareApp arg0) {
     }
 
     @Override
