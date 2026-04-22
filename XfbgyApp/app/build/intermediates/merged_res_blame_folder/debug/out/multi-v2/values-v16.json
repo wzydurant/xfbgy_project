@@ -4,7 +4,7 @@
             "outputFile": "com.example.hello.app-mergeDebugResources-29:/values-v16/values-v16.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\wzy\\.gradle\\caches\\transforms-3\\d219056562254d5f48577226afcb14b6\\transformed\\appcompat-1.6.1\\res\\values-v16\\values-v16.xml",
+                    "source": "C:\\Users\\ThinKPad\\.gradle\\caches\\transforms-3\\d219056562254d5f48577226afcb14b6\\transformed\\appcompat-1.6.1\\res\\values-v16\\values-v16.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",
@@ -23,7 +23,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\wzy\\.gradle\\caches\\transforms-3\\97415b8e2c2b19b88cea32d17b874052\\transformed\\core-1.12.0\\res\\values-v16\\values-v16.xml",
+                    "source": "C:\\Users\\ThinKPad\\.gradle\\caches\\transforms-3\\97415b8e2c2b19b88cea32d17b874052\\transformed\\core-1.12.0\\res\\values-v16\\values-v16.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",
