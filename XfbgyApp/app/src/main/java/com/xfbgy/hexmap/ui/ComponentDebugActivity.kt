@@ -4,17 +4,24 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
+import android.text.InputType
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.xfbgy.hexmap.data.DebugHexMap
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.TerrainType
+import com.xfbgy.hexmap.generation.DebugRiverGenerator
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * 组件调试Activity
@@ -43,6 +50,12 @@ class ComponentDebugActivity : AppCompatActivity() {
     // 状态文本
     private lateinit var statusText: TextView
     private lateinit var edgeInfoText: TextView
+
+    // 地图生成相关
+    private lateinit var mapSizeInput: EditText
+    private lateinit var mapGridView: HexMapGridView
+    private lateinit var mapInfoText: TextView
+    private var currentMap: DebugHexMap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,7 +122,7 @@ class ComponentDebugActivity : AppCompatActivity() {
 
         // ========== Section 2: 河流组件 ==========
         rootLayout.addView(createSectionTitle("2. 基础组件 - 河流"))
-        rootLayout.addView(createSectionSubtitle("3dp宽度，与HexCell一条边等长"))
+        rootLayout.addView(createSectionSubtitle("3dp宽度，覆盖HexCell边，邻居间无缝隙"))
 
         riverPreviewView = RiverPreviewView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -281,6 +294,111 @@ class ComponentDebugActivity : AppCompatActivity() {
         }
         rootLayout.addView(resetBtn)
 
+        // ========== Section 5: 地图生成 ==========
+        rootLayout.addView(createSectionTitle("5. 地图生成"))
+        rootLayout.addView(createSectionSubtitle("输入大小生成n×n六角格地图，随机地形/工事/河流"))
+
+        // 输入行
+        val inputLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val inputLabel = TextView(this).apply {
+            text = "地图大小："
+            textSize = 15f
+            setTextColor(Color.WHITE)
+        }
+        inputLayout.addView(inputLabel)
+
+        mapSizeInput = EditText(this).apply {
+            hint = "3~15"
+            textSize = 15f
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFF80FFFFFF.toInt())
+            setBackgroundColor(0xFF37474F.toInt())
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(80), dpToPx(44))
+        }
+        mapSizeInput.setText("5")
+        inputLayout.addView(mapSizeInput)
+
+        val sizeSuffix = TextView(this).apply {
+            text = " × n"
+            textSize = 15f
+            setTextColor(0xFFB0FFFFFF.toInt())
+        }
+        inputLayout.addView(sizeSuffix)
+
+        val generateBtn = Button(this).apply {
+            text = "生成地图"
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF1E90FF.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dpToPx(44)
+            ).apply {
+                marginStart = dpToPx(12)
+            }
+            setOnClickListener { generateMap() }
+        }
+        inputLayout.addView(generateBtn)
+
+        rootLayout.addView(inputLayout)
+
+        // 地图信息
+        mapInfoText = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFFB0FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, dpToPx(8), 0, dpToPx(4))
+            text = "点击\"生成地图\"创建随机地图"
+        }
+        rootLayout.addView(mapInfoText)
+
+        // 地图容器（可横向+纵向滚动）
+        val mapScrollContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setBackgroundColor(0xFF0D1117.toInt())
+        }
+
+        val hScrollView = HorizontalScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            isFillViewport = true
+        }
+
+        val mapVScrollView = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dpToPx(500)
+            )
+        }
+
+        mapGridView = HexMapGridView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        mapVScrollView.addView(mapGridView)
+        hScrollView.addView(mapVScrollView)
+        mapScrollContainer.addView(hScrollView)
+        rootLayout.addView(mapScrollContainer)
+
         // 底部间距
         val spacer = View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -344,6 +462,78 @@ class ComponentDebugActivity : AppCompatActivity() {
     }
 
     /**
+     * 生成随机地图
+     */
+    private fun generateMap() {
+        val sizeStr = mapSizeInput.text.toString()
+        val size = sizeStr.toIntOrNull()
+
+        if (size == null || size !in 3..15) {
+            Toast.makeText(this, "请输入3~15之间的数字", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val random = Random.Default
+        val map = DebugHexMap(size, size)
+
+        // 1. 随机地形颜色
+        val terrainTypes = TerrainType.entries
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                map.cells[x][y].terrain = terrainTypes.random(random)
+            }
+        }
+
+        // 2. 随机防御工事（各格子独立，每条边30%概率有工事）
+        val fortTypes = FortType.entries.filter { it != FortType.NONE }
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                for (dir in 0..5) {
+                    // 工事各格子独立，不需要与邻居同步
+                    if (random.nextFloat() < 0.3f) {
+                        val fort = fortTypes.random(random)
+                        map.setFortification(x, y, dir, fort)
+                    }
+                }
+            }
+        }
+
+        // 3. 生成河流
+        val riverGenerator = DebugRiverGenerator()
+        riverGenerator.generate(map)
+
+        // 4. 显示地图
+        currentMap = map
+        mapGridView.map = map
+
+        // 根据地图大小调整hex半径
+        val maxMapWidthPx = resources.displayMetrics.widthPixels - dpToPx(32)
+        val desiredRadius = maxMapWidthPx / (size * sqrt(3f) + sqrt(3f) / 2)
+        val clampedRadius = desiredRadius.coerceIn(
+            15f * resources.displayMetrics.density,
+            50f * resources.displayMetrics.density
+        )
+        mapGridView.hexRadius = clampedRadius
+
+        // 统计信息
+        var riverCount = 0
+        var fortCount = 0
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                for (dir in 0..5) {
+                    if (map.edges[x][y][dir].hasRiver) riverCount++
+                    if (map.edges[x][y][dir].fortification != FortType.NONE) fortCount++
+                }
+            }
+        }
+        // 河流边被两侧都计数了，除以2
+        riverCount /= 2
+        // 工事各格子独立，直接计数
+
+        mapInfoText.text = "${size}×${size} 地图 | 河流边: $riverCount | 工事边: $fortCount"
+    }
+
+    /**
      * 河流预览View - 单独展示河流线条
      */
     class RiverPreviewView @JvmOverloads constructor(
@@ -381,13 +571,12 @@ class ComponentDebugActivity : AppCompatActivity() {
             // 参考边界线
             canvas.drawLine(margin, y, margin + edgeLen, y, borderPaint)
 
-            // 河流（偏移到内侧）
-            val riverOffset = 12f
-            canvas.drawLine(margin, y + riverOffset, margin + edgeLen, y + riverOffset, riverPaint)
+            // 河流（直接覆盖在边界线上，邻居间无缝隙）
+            canvas.drawLine(margin, y, margin + edgeLen, y, riverPaint)
 
             // 标签
-            canvas.drawText("边界线（参考）", margin + edgeLen / 2, y - 16f, labelPaint)
-            canvas.drawText("河流（3dp，蓝色）", margin + edgeLen / 2, y + riverOffset + 28f, labelPaint)
+            canvas.drawText("边界线 + 河流（覆盖边上）", margin + edgeLen / 2, y - 16f, labelPaint)
+            canvas.drawText("3dp蓝色线，邻居间无缝衔接", margin + edgeLen / 2, y + 28f, labelPaint)
         }
 
         private fun dpToPx(dp: Float): Float {

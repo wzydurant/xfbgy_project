@@ -158,19 +158,23 @@ class HexCellDebugView @JvmOverloads constructor(
                 canvas.drawLine(x1, y1, x2, y2, selectedEdgePaint)
             }
 
-            // 河流（在边内侧）
+            // 河流 - 直接绘制在边上，邻居间无缝隙
             val hasRiver = edgeRivers[dir]
             val fort = edgeForts[dir]
 
             if (hasRiver) {
-                val riverOffset = 8f
-                val inner = getInnerEdgePoints(x1, y1, x2, y2, riverOffset)
-                canvas.drawLine(inner[0], inner[1], inner[2], inner[3], riverPaint)
+                canvas.drawLine(x1, y1, x2, y2, riverPaint)
             }
 
-            // 防御工事（在河流更内侧）
+            // 防御工事 - 各格子独立，在河流内侧
             if (fort != FortType.NONE) {
-                val fortOffset = if (hasRiver) 18f else 8f
+                val fortOffset = if (hasRiver) {
+                    // 有河流时，工事在河流内侧
+                    dpToPx(3f / 2f + 2f)
+                } else {
+                    // 无河流时，工事紧贴边内侧
+                    dpToPx(2f)
+                }
                 val inner = getInnerEdgePoints(x1, y1, x2, y2, fortOffset)
                 fortPaint.color = getFortColor(fort)
                 drawFortificationLines(canvas, inner[0], inner[1], inner[2], inner[3], fort)
