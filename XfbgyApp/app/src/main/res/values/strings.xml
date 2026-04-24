@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">MyAndroidApp</string>
+    <string name="app_name">兵棋手游</string>
+    <string name="game_title">六角格战棋</string>
+    <string name="game_subtitle">策略制胜 · 智谋天下</string>
+    <string name="start_game">开始游戏</string>
+    <string name="version_info">v1.0 Phase 1</string>
 </resources>
