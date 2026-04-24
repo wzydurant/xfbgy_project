@@ -28,7 +28,7 @@ object AttributeCalculator {
             }
         }
 
-        // Step 3: 河流效果（已在setRiver时同步设置）
+        // Step 3: 河流效果
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 for (dir in 0..5) {
@@ -38,7 +38,42 @@ object AttributeCalculator {
             }
         }
 
-        // Step 4: 防御工事效果（已在setFortification时同步设置）
+        // Step 4: 防御工事效果
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                for (dir in 0..5) {
+                    val edge = hexMap.getEdge(x, y, dir) ?: continue
+                    edge.applyFortBonus()
+                }
+            }
+        }
+    }
+
+    /**
+     * 计算所有效果（在边属性已设置后调用，只叠加不清除）
+     * @param hexMap 地图对象
+     */
+    fun calculateEffects(hexMap: HexMap) {
+        // Step 1 & Step 2: 地形效果（基础效果）
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                val cell = hexMap.getCell(x, y) ?: continue
+                val edges = hexMap.edges[x][y]
+                cell.applyTerrainEffects(edges)
+            }
+        }
+
+        // Step 3: 河流效果（叠加到已有河流标记）
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                for (dir in 0..5) {
+                    val edge = hexMap.getEdge(x, y, dir) ?: continue
+                    edge.applyRiverEffect()
+                }
+            }
+        }
+
+        // Step 4: 防御工事效果（叠加到已有防御工事标记）
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 for (dir in 0..5) {

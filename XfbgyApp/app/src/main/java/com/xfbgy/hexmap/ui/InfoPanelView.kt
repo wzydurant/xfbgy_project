@@ -7,20 +7,25 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.Spinner
+import android.widget.FrameLayout
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.HexCell
 import com.xfbgy.hexmap.data.HexEdge
 import com.xfbgy.hexmap.data.TerrainType
+import com.xfbgy.hexmap.data.Unit as GameUnit
 
 /**
  * InfoPanelView - 地图信息面板自定义View
  *
- * 设计方案（Phase 1-C 可视化层）：
- *
  * 1. 面板布局设计：
  *    - 顶部：选中格子基本信息（坐标、地形）
- *    - 中间：移动力消耗、ZOC状态
+ *    - 中部：移动力消耗、ZOC状态
+ *    - 单位下拉框（点击切换选择）
  *    - 底部：6个方向按钮（上、右上、右下、下、左下、左上）
  *
  * 2. 边缘信息展示：
@@ -36,7 +41,7 @@ import com.xfbgy.hexmap.data.TerrainType
  * 4. 交互设计：
  *    - 方向按钮可点击切换边缘信息
  *    - 点击面板外区域自动关闭
- *    - 支持滑动/展开动画（可选）
+ *    - 单位下拉框点击切换选择单位
  */
 class InfoPanelView @JvmOverloads constructor(
     context: Context,
@@ -50,17 +55,22 @@ class InfoPanelView @JvmOverloads constructor(
     private var currentCell: HexCell? = null
     private var currentEdgeDir: Int = -1  // 当前选中的边方向
     private var currentEdge: HexEdge? = null
+    private var selectedUnitIndex: Int = 0  // 当前选中的单位索引
 
     // ==================== 公开属性 ====================
     val panelIsVisible: Boolean get() = isVisible
 
     // ==================== 布局参数 ====================
-    private val panelWidth = 320f         // 面板宽度
-    private val panelHeight = 400f        // 面板高度
-    private val cornerRadius = 16f         // 圆角半径
-    private val padding = 24f              // 内边距
-    private val itemSpacing = 12f         // 条目间距
-    private val buttonSize = 48f          // 方向按钮大小
+    private val panelWidth = 420f         // 面板宽度
+    private val panelHeight = 550f         // 面板高度
+    private val cornerRadius = 20f         // 圆角半径
+    private val padding = 28f              // 内边距
+    private val itemSpacing = 14f         // 条目间距
+    private val buttonSize = 52f          // 方向按钮大小
+    private val spinnerHeight = 60f        // 下拉框高度
+
+    // ==================== 单位列表 ====================
+    private var units: List<GameUnit> = emptyList()
 
     // ==================== 绘制工具 ====================
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -74,56 +84,55 @@ class InfoPanelView @JvmOverloads constructor(
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = HexMapColors.PANEL_TEXT
-        textSize = 18f
+        textSize = 22f
     }
     private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = HexMapColors.PANEL_TEXT
-        textSize = 22f
+        textSize = 26f
         typeface = Typeface.DEFAULT_BOLD
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = HexMapColors.PANEL_TEXT
-        textSize = 14f
+        textSize = 17f
         alpha = 180
-    }
-    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = HexMapColors.PANEL_TEXT
-        textSize = 18f
     }
     private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = HexMapColors.PANEL_ACCENT
-        textSize = 18f
+        textSize = 22f
     }
     private val buttonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
     private val buttonTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = HexMapColors.PANEL_TEXT
-        textSize = 20f
+        textSize = 26f
         textAlign = Paint.Align.CENTER
     }
-    private val arrowPath = Path()        // 方向箭头Path
+    private val arrowPath = Path()
+    private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // ==================== 下拉框区域 ====================
+    private val spinnerRect = RectF()
 
     // ==================== 方向按钮位置 ====================
-    // 6个方向按钮的矩形区域（用于点击检测）
     private val directionButtons = Array(6) { RectF() }
 
-    // 方向常量（与开发方案6.3节对应）
+    // 方向常量
     companion object {
-        const val DIR_TOP = 0          // 上
-        const val DIR_TOP_RIGHT = 1   // 右上
-        const val DIR_BOTTOM_RIGHT = 2 // 右下
-        const val DIR_BOTTOM = 3       // 下
-        const val DIR_BOTTOM_LEFT = 4  // 左下
-        const val DIR_TOP_LEFT = 5     // 左上
+        const val DIR_TOP = 0
+        const val DIR_TOP_RIGHT = 1
+        const val DIR_BOTTOM_RIGHT = 2
+        const val DIR_BOTTOM = 3
+        const val DIR_BOTTOM_LEFT = 4
+        const val DIR_TOP_LEFT = 5
 
-        // 方向名称（中文）
         private val DIR_NAMES = arrayOf("上", "右上", "右下", "下", "左下", "左上")
     }
 
     // ==================== 监听器 ====================
     private var onDirectionClickListener: ((Int) -> Unit)? = null
     private var onPanelDismissListener: (() -> Unit)? = null
+    private var onUnitSelectedListener: ((GameUnit?) -> Unit)? = null
 
     // ==================== 公开接口 ====================
 
@@ -135,6 +144,8 @@ class InfoPanelView @JvmOverloads constructor(
         showingEdgeInfo = false
         currentEdgeDir = -1
         currentEdge = null
+        selectedUnitIndex = 0
+        units = cell.units.toList()
         isVisible = true
         invalidate()
     }
@@ -147,6 +158,7 @@ class InfoPanelView @JvmOverloads constructor(
         showingEdgeInfo = true
         currentEdgeDir = direction
         currentEdge = edge
+        units = cell.units.toList()
         isVisible = true
         invalidate()
     }
@@ -159,6 +171,8 @@ class InfoPanelView @JvmOverloads constructor(
         currentCell = null
         currentEdgeDir = -1
         currentEdge = null
+        selectedUnitIndex = 0
+        units = emptyList()
         onPanelDismissListener?.invoke()
         invalidate()
     }
@@ -175,6 +189,20 @@ class InfoPanelView @JvmOverloads constructor(
      */
     fun setOnPanelDismissListener(listener: () -> Unit) {
         onPanelDismissListener = listener
+    }
+
+    /**
+     * 设置单位选择监听
+     */
+    fun setOnUnitSelectedListener(listener: (GameUnit?) -> Unit) {
+        onUnitSelectedListener = listener
+    }
+
+    /**
+     * 获取当前选中的单位
+     */
+    fun getSelectedUnit(): GameUnit? {
+        return units.getOrNull(selectedUnitIndex)
     }
 
     /**
@@ -222,7 +250,6 @@ class InfoPanelView @JvmOverloads constructor(
      * 计算面板区域
      */
     private fun getPanelRect(): RectF {
-        // 默认居中显示
         val left = (width - panelWidth) / 2f
         val top = (height - panelHeight) / 2f
         return RectF(left, top, left + panelWidth, top + panelHeight)
@@ -230,14 +257,6 @@ class InfoPanelView @JvmOverloads constructor(
 
     /**
      * 绘制格子信息
-     *
-     * 布局：
-     * - 标题：坐标 + 地形
-     * - 分隔线
-     * - 移动力消耗
-     * - ZOC状态
-     * - 分隔线
-     * - 方向按钮（6个）
      */
     private fun drawCellInfo(canvas: Canvas, rect: RectF) {
         var currentY = rect.top + padding
@@ -271,27 +290,92 @@ class InfoPanelView @JvmOverloads constructor(
         )
         currentY += itemSpacing
 
-        // 提示文字
+        // 单位选择区域
+        val unitLabel = "单位选择："
+        canvas.drawText(unitLabel, rect.left + padding, currentY + labelPaint.textSize, labelPaint)
+        currentY += labelPaint.textSize + 8f
+
+        // 绘制Spinner背景
+        val spinnerBgRect = RectF(
+            rect.left + padding,
+            currentY,
+            rect.right - padding,
+            currentY + spinnerHeight
+        )
+        spinnerRect.set(spinnerBgRect)
+        buttonPaint.color = 0xFF444444.toInt()
+        buttonPaint.alpha = 200
+        canvas.drawRoundRect(spinnerBgRect, 8f, 8f, buttonPaint)
+        
+        // 绘制Spinner文字
+        val selectedUnit = units.getOrNull(selectedUnitIndex)
+        val spinnerText = if (selectedUnit != null) {
+            "${selectedUnit.name} (攻:${selectedUnit.attack} 防:${selectedUnit.defense} 移:${selectedUnit.movement})"
+        } else {
+            "（无单位）"
+        }
+        textPaint.textSize = 18f
+        canvas.drawText(spinnerText, rect.left + padding + 12f, currentY + spinnerHeight / 2 + textPaint.textSize / 3, textPaint)
+        textPaint.textSize = 22f
+
+        // 绘制下拉箭头
+        val arrowX = rect.right - padding - 30f
+        val arrowY = currentY + spinnerHeight / 2
+        drawDropdownArrow(canvas, arrowX, arrowY)
+        
+        currentY += spinnerHeight + itemSpacing
+
+        // 分隔线
+        canvas.drawLine(
+            rect.left + padding, currentY,
+            rect.right - padding, currentY,
+            Paint().apply { color = HexMapColors.PANEL_ACCENT; strokeWidth = 1f; alpha = 100 }
+        )
+        currentY += itemSpacing
+
+        // 单位列表（只读显示）
+        if (units.size > 1) {
+            val listLabel = "单位列表（${units.size}个）："
+            canvas.drawText(listLabel, rect.left + padding, currentY + labelPaint.textSize, labelPaint)
+            currentY += labelPaint.textSize + 6f
+
+            for (i in units.indices) {
+                val unit = units[i]
+                val unitText = "${i + 1}. ${unit.name} (攻:${unit.attack} 防:${unit.defense})"
+                labelPaint.alpha = 160
+                canvas.drawText(unitText, rect.left + padding + 12f, currentY + labelPaint.textSize, labelPaint)
+                labelPaint.alpha = 180
+                currentY += labelPaint.textSize + 4f
+            }
+        }
+
+        // 方向按钮提示
+        currentY = rect.bottom - padding - buttonSize - itemSpacing * 2
         val hintText = "点击方向按钮查看边缘属性"
-        canvas.drawText(hintText, rect.left + padding, currentY + labelPaint.textSize, labelPaint)
-        currentY += labelPaint.textSize + itemSpacing * 2
+        canvas.drawText(hintText, rect.left + padding, currentY, labelPaint)
+        currentY += itemSpacing * 2
 
         // 绘制6个方向按钮
         drawDirectionButtons(canvas, rect, currentY)
     }
 
     /**
+     * 绘制下拉箭头
+     */
+    private fun drawDropdownArrow(canvas: Canvas, x: Float, y: Float) {
+        arrowPath.reset()
+        val size = 12f
+        arrowPath.moveTo(x - size / 2, y - size / 3)
+        arrowPath.lineTo(x, y + size / 3)
+        arrowPath.lineTo(x + size / 2, y - size / 3)
+        arrowPaint.color = HexMapColors.PANEL_TEXT
+        arrowPaint.style = Paint.Style.STROKE
+        arrowPaint.strokeWidth = 2f
+        canvas.drawPath(arrowPath, arrowPaint)
+    }
+
+    /**
      * 绘制边缘信息
-     *
-     * 布局：
-     * - 标题：方向名称
-     * - 分隔线
-     * - 河流状态
-     * - 防御工事
-     * - 移动破坏
-     * - 防御优势
-     * - 进攻优势
-     * - 条件列表
      */
     private fun drawEdgeInfo(canvas: Canvas, rect: RectF) {
         val edge = currentEdge ?: return
@@ -368,69 +452,30 @@ class InfoPanelView @JvmOverloads constructor(
         val buttonSpacing = (rect.width() - padding * 2 - buttonSize * 6) / 5
         val buttonY = startY
 
+        val dirSymbols = arrayOf("↑", "↗", "↘", "↓", "↙", "↖")
+
         for (i in 0 until 6) {
             val buttonX = rect.left + padding + i * (buttonSize + buttonSpacing)
 
-            // 按钮背景
             val isSelected = (i == currentEdgeDir)
             buttonPaint.color = if (isSelected) HexMapColors.PANEL_ACCENT else HexMapColors.PANEL_BG
-            buttonPaint.alpha = if (isSelected) 255 else 100
+            buttonPaint.alpha = if (isSelected) 255 else 150
 
             val buttonRect = RectF(buttonX, buttonY, buttonX + buttonSize, buttonY + buttonSize)
             directionButtons[i] = buttonRect
 
             canvas.drawRoundRect(buttonRect, 8f, 8f, buttonPaint)
 
-            // 绘制方向箭头
-            drawDirectionArrow(canvas, buttonRect.centerX(), buttonRect.centerY(), i)
+            buttonTextPaint.color = HexMapColors.PANEL_TEXT
+            buttonTextPaint.textSize = buttonSize * 0.5f
+            buttonTextPaint.textAlign = Paint.Align.CENTER
+            canvas.drawText(
+                dirSymbols[i],
+                buttonRect.centerX(),
+                buttonRect.centerY() + buttonTextPaint.textSize / 3,
+                buttonTextPaint
+            )
         }
-    }
-
-    /**
-     * 绘制方向箭头
-     */
-    private fun drawDirectionArrow(canvas: Canvas, cx: Float, cy: Float, direction: Int) {
-        arrowPath.reset()
-
-        val arrowSize = buttonSize / 4
-
-        when (direction) {
-            DIR_TOP -> { // 上
-                arrowPath.moveTo(cx, cy - arrowSize)
-                arrowPath.lineTo(cx - arrowSize / 2, cy + arrowSize / 2)
-                arrowPath.lineTo(cx + arrowSize / 2, cy + arrowSize / 2)
-            }
-            DIR_TOP_RIGHT -> { // 右上
-                arrowPath.moveTo(cx + arrowSize * 0.7f, cy - arrowSize * 0.7f)
-                arrowPath.lineTo(cx - arrowSize / 2, cy + arrowSize / 2)
-                arrowPath.lineTo(cx - arrowSize / 2, cy - arrowSize / 2)
-            }
-            DIR_BOTTOM_RIGHT -> { // 右下
-                arrowPath.moveTo(cx + arrowSize * 0.7f, cy + arrowSize * 0.7f)
-                arrowPath.lineTo(cx - arrowSize / 2, cy - arrowSize / 2)
-                arrowPath.lineTo(cx - arrowSize / 2, cy + arrowSize / 2)
-            }
-            DIR_BOTTOM -> { // 下
-                arrowPath.moveTo(cx, cy + arrowSize)
-                arrowPath.lineTo(cx - arrowSize / 2, cy - arrowSize / 2)
-                arrowPath.lineTo(cx + arrowSize / 2, cy - arrowSize / 2)
-            }
-            DIR_BOTTOM_LEFT -> { // 左下
-                arrowPath.moveTo(cx - arrowSize * 0.7f, cy + arrowSize * 0.7f)
-                arrowPath.lineTo(cx + arrowSize / 2, cy - arrowSize / 2)
-                arrowPath.lineTo(cx + arrowSize / 2, cy + arrowSize / 2)
-            }
-            DIR_TOP_LEFT -> { // 左上
-                arrowPath.moveTo(cx - arrowSize * 0.7f, cy - arrowSize * 0.7f)
-                arrowPath.lineTo(cx + arrowSize / 2, cy + arrowSize / 2)
-                arrowPath.lineTo(cx + arrowSize / 2, cy - arrowSize / 2)
-            }
-        }
-
-        arrowPath.close()
-
-        buttonTextPaint.color = HexMapColors.PANEL_TEXT
-        canvas.drawPath(arrowPath, buttonTextPaint)
     }
 
     /**
@@ -471,6 +516,54 @@ class InfoPanelView @JvmOverloads constructor(
         return if (factions.isEmpty()) "无" else factions.joinToString(", ")
     }
 
+    // ==================== 触摸事件处理 ====================
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isVisible) return false
+
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                // 检查是否点击了下拉框
+                if (!showingEdgeInfo && spinnerRect.contains(event.x, event.y)) {
+                    // 循环选择下一个单位
+                    if (units.isNotEmpty()) {
+                        selectedUnitIndex = (selectedUnitIndex + 1) % units.size
+                        onUnitSelectedListener?.invoke(units.getOrNull(selectedUnitIndex))
+                        invalidate()
+                    }
+                    return true
+                }
+
+                // 检查是否点击了方向按钮
+                val dir = getDirectionAt(event.x, event.y)
+                if (dir != -1) {
+                    if (showingEdgeInfo) {
+                        showingEdgeInfo = false
+                        currentEdgeDir = -1
+                        currentEdge = null
+                        invalidate()
+                    }
+                    onDirectionClickListener?.invoke(dir)
+                    return true
+                }
+
+                // 如果在边缘信息模式，点击面板其他地方返回格子信息
+                if (showingEdgeInfo) {
+                    val panelRect = getPanelRect()
+                    if (panelRect.contains(event.x, event.y)) {
+                        showingEdgeInfo = false
+                        currentEdgeDir = -1
+                        currentEdge = null
+                        invalidate()
+                        return true
+                    }
+                }
+
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
     // ==================== 尺寸测量 ====================
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val desiredWidth = panelWidth.toInt()
@@ -495,4 +588,6 @@ class InfoPanelView @JvmOverloads constructor(
 
         setMeasuredDimension(width, height)
     }
+
+    private fun minOf(a: Int, b: Int): Int = if (a < b) a else b
 }

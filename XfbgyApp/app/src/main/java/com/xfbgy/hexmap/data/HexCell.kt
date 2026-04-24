@@ -2,6 +2,7 @@ package com.xfbgy.hexmap.data
 
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.TerrainType
+import com.xfbgy.hexmap.data.Unit as GameUnit
 
 /**
  * 六角格内部属性数据类
@@ -17,7 +18,7 @@ data class HexCell(
     val x: Int,
     val y: Int,
     var terrain: TerrainType,
-    var units: MutableList<Any> = mutableListOf(),
+    var units: MutableList<GameUnit> = mutableListOf(),
     var movementCost: Int = 0,
     var zoc: Int = 0b000
 ) {

@@ -3,41 +3,67 @@ package com.xfbgy.hexmap.generator
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.HexMap
 import com.xfbgy.hexmap.data.TerrainType
+import kotlin.math.min
 import kotlin.random.Random
 
 /**
- * 地形生成器
+ * 地形生成器 - 简化版
  *
- * 采用比例随机 + BFS 聚类平滑策略：
- * 1. 按比例预分配地形总数
- * 2. 随机选取种子格，使用 BFS 扩散形成地形团块
- * 3. 高山与建筑群小团块随机散布，建筑群优先不与高山相邻
- * 4. 建筑群特殊处理：6条边防御工事随机统一为同一等级
- *
- * 目标比例：平原40%, 树林30%, 山地15%, 高山5%, 建筑群10%
+ * 生成策略：
+ * 1. 生成四种地形（高山、建筑群、山地/森林、平原）
+ * 2. 检查建筑群聚团数量，少了添加，多了减少
+ * 3. 防御工事规则：
+ *    - 孤立建筑群：栅栏与土墙比例2:1
+ *    - 聚团建筑群：石墙
+ *    - 聚团内部相邻边：无防御工事
  */
 object TerrainGenerator {
 
     /**
      * 地形目标比例
+     * 平原58.5%, 树林15%, 山地7.5%, 高山5%, 建筑群3.3%
      */
     private val terrainProportions = mapOf(
-        TerrainType.PLAIN to 0.40,
-        TerrainType.FOREST to 0.30,
-        TerrainType.HILL to 0.15,
-        TerrainType.MOUNTAIN to 0.05,
-        TerrainType.URBAN to 0.10
+        TerrainType.PLAIN to 0.585f,
+        TerrainType.FOREST to 0.15f,
+        TerrainType.HILL to 0.075f,
+        TerrainType.MOUNTAIN to 0.05f,
+        TerrainType.URBAN to 0.033f
     )
 
     /**
-     * 聚类扩散的概率（用于BFS扩散时控制团块大小）
+     * 高山团块大小范围
      */
-    private const val CLUSTER_SPREAD_PROBABILITY = 0.7
+    private const val MOUNTAIN_CLUSTER_MIN = 2
+    private const val MOUNTAIN_CLUSTER_MAX = 5
 
     /**
-     * 为建筑群生成统一的防御工事等级（不为NONE）
+     * 建筑群团块大小范围
      */
-    private val urbanFortTypes = listOf(FortType.FENCE, FortType.EARTHWALL, FortType.STONEWALL)
+    private const val URBAN_CLUSTER_MIN = 1
+    private const val URBAN_CLUSTER_MAX = 3
+
+    /**
+     * 目标建筑群聚团数量范围
+     */
+    private const val MIN_URBAN_CLUSTERS = 8
+    private const val MAX_URBAN_CLUSTERS = 15
+
+    /**
+     * 山地/森林团块大小范围
+     */
+    private const val TERRAIN_CLUSTER_MIN = 2
+    private const val TERRAIN_CLUSTER_MAX = 10
+
+    /**
+     * 聚团概率
+     */
+    private const val CLUSTER_PROBABILITY = 0.6f
+
+    /**
+     * 栅栏概率（2:1比例）
+     */
+    private const val FENCE_RATIO = 0.67f
 
     /**
      * 生成完整地图地形
@@ -51,24 +77,31 @@ object TerrainGenerator {
         val totalCells = hexMap.width * hexMap.height
         val terrainCounts = calculateTerrainCounts(totalCells)
 
-        // 创建可用的坐标列表
-        val availableCells = mutableListOf<Pair<Int, Int>>()
+        // 重置所有格子为平原
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
-                availableCells.add(Pair(x, y))
+                hexMap.cells[x][y].terrain = TerrainType.PLAIN
             }
         }
 
-        // 分配高山（优先边缘散布，避免聚集）
-        assignMountainTerrains(hexMap, terrainCounts[TerrainType.MOUNTAIN] ?: 0, availableCells, random)
+        // 第一步：分配高山（整个地图随机分布，2-5格小聚团）
+        assignDistributedTerrains(hexMap, TerrainType.MOUNTAIN, terrainCounts[TerrainType.MOUNTAIN] ?: 0,
+            MOUNTAIN_CLUSTER_MIN, MOUNTAIN_CLUSTER_MAX, random)
 
-        // 分配建筑群（不与高山相邻）
-        assignUrbanTerrains(hexMap, terrainCounts[TerrainType.URBAN] ?: 0, availableCells, random)
+        // 第二步：分配建筑群（先分配，再检查调整）
+        val initialUrbanCount = terrainCounts[TerrainType.URBAN] ?: 0
+        assignInitialUrbanTerrains(hexMap, initialUrbanCount, random)
 
-        // 分配剩余地形（使用BFS聚类扩散）
-        assignClusteredTerrains(hexMap, terrainCounts, availableCells, random)
+        // 第三步：分配山地和森林
+        assignDistributedTerrains(hexMap, TerrainType.FOREST, terrainCounts[TerrainType.FOREST] ?: 0,
+            TERRAIN_CLUSTER_MIN, TERRAIN_CLUSTER_MAX, random)
+        assignDistributedTerrains(hexMap, TerrainType.HILL, terrainCounts[TerrainType.HILL] ?: 0,
+            TERRAIN_CLUSTER_MIN, TERRAIN_CLUSTER_MAX, random)
 
-        // 为建筑群设置防御工事
+        // 第四步：检查并调整建筑群聚团数量
+        adjustUrbanClusters(hexMap, random)
+
+        // 第五步：为建筑群设置防御工事
         assignUrbanFortifications(hexMap, random)
     }
 
@@ -79,177 +112,85 @@ object TerrainGenerator {
         val counts = mutableMapOf<TerrainType, Int>()
         var remaining = totalCells
 
-        // 按优先级计算（高山和建筑群先确定）
         for (terrain in terrainProportions.keys) {
-            val proportion = terrainProportions[terrain] ?: 0.0
+            val proportion = terrainProportions[terrain] ?: 0.0f
             val count = if (terrain == TerrainType.PLAIN) {
-                // 平原最后处理，使用剩余数量
                 remaining
             } else {
-                (totalCells * proportion).toInt().coerceAtLeast(1)
+                (totalCells.toFloat() * proportion).toInt().coerceAtLeast(1)
             }
             counts[terrain] = count
             remaining -= count
         }
 
-        // 平原使用剩余数量
         counts[TerrainType.PLAIN] = remaining.coerceAtLeast(0)
-
         return counts
     }
 
     /**
-     * 分配高山（边缘散布）
+     * 分配在整个地图随机分布的地形（带小规模聚团）
      */
-    private fun assignMountainTerrains(
+    private fun assignDistributedTerrains(
         hexMap: HexMap,
+        terrain: TerrainType,
         count: Int,
-        availableCells: MutableList<Pair<Int, Int>>,
+        clusterMin: Int,
+        clusterMax: Int,
         random: Random
     ) {
         if (count <= 0) return
 
-        // 获取边缘格子
-        val edgeCells = getEdgeCells(hexMap)
-        val selectedCells = mutableListOf<Pair<Int, Int>>()
+        var remaining = count
 
-        // 随机选择边缘位置作为高山种子
-        val shuffledEdges = edgeCells.shuffled(random)
-        for (cell in shuffledEdges) {
-            if (selectedCells.size >= count) break
-            if (!isNearMountain(hexMap, cell.first, cell.second)) {
-                selectedCells.add(cell)
+        while (remaining > 0) {
+            val seedX = random.nextInt(hexMap.width)
+            val seedY = random.nextInt(hexMap.height)
+
+            if (hexMap.cells[seedX][seedY].terrain != TerrainType.PLAIN) {
+                continue
             }
-        }
 
-        // 如果边缘不够，散布到内部
-        if (selectedCells.size < count) {
-            val internalCells = availableCells.filter { !isEdgeCell(it, hexMap) }
-            for (cell in internalCells.shuffled(random)) {
-                if (selectedCells.size >= count) break
-                if (!isNearMountain(hexMap, cell.first, cell.second)) {
-                    selectedCells.add(cell)
-                }
-            }
-        }
+            val clusterSize = random.nextInt(clusterMin, clusterMax + 1)
+            val actualSize = min(clusterSize, remaining)
 
-        // 设置高山
-        for ((x, y) in selectedCells) {
-            hexMap.cells[x][y].terrain = TerrainType.MOUNTAIN
-            availableCells.remove(Pair(x, y))
+            val cluster = growCluster(hexMap, seedX, seedY, terrain, actualSize, random)
+            remaining -= cluster.size
         }
     }
 
     /**
-     * 分配建筑群（不与高山相邻）
-     */
-    private fun assignUrbanTerrains(
-        hexMap: HexMap,
-        count: Int,
-        availableCells: MutableList<Pair<Int, Int>>,
-        random: Random
-    ) {
-        if (count <= 0) return
-
-        val selectedCells = mutableListOf<Pair<Int, Int>>()
-
-        for (cell in availableCells.shuffled(random)) {
-            if (selectedCells.size >= count) break
-            val (x, y) = cell
-            // 不与高山相邻
-            if (!isAdjacentToTerrain(hexMap, x, y, TerrainType.MOUNTAIN)) {
-                selectedCells.add(cell)
-            }
-        }
-
-        // 设置建筑群
-        for ((x, y) in selectedCells) {
-            hexMap.cells[x][y].terrain = TerrainType.URBAN
-            availableCells.remove(Pair(x, y))
-        }
-    }
-
-    /**
-     * 使用BFS聚类分配剩余地形
-     */
-    private fun assignClusteredTerrains(
-        hexMap: HexMap,
-        counts: Map<TerrainType, Int>,
-        availableCells: MutableList<Pair<Int, Int>>,
-        random: Random
-    ) {
-        // 需要分配的地形类型（按比例排序：树林>山地>平原）
-        val terrainsToAssign = listOf(
-            TerrainType.FOREST to (counts[TerrainType.FOREST] ?: 0),
-            TerrainType.HILL to (counts[TerrainType.HILL] ?: 0),
-            TerrainType.PLAIN to (counts[TerrainType.PLAIN] ?: 0)
-        )
-
-        for ((terrain, totalCount) in terrainsToAssign) {
-            if (totalCount <= 0) continue
-
-            val assigned = mutableSetOf<Pair<Int, Int>>()
-            var remaining = totalCount
-
-            // 随机选择种子点开始BFS扩散
-            val seeds = availableCells.filter { it !in assigned }.shuffled(random)
-
-            for (seed in seeds) {
-                if (remaining <= 0) break
-                if (seed in assigned) continue
-
-                // BFS扩散形成团块
-                val cluster = growCluster(hexMap, seed, terrain, remaining, assigned, random)
-                assigned.addAll(cluster)
-                remaining -= cluster.size
-            }
-
-            // 剩余的直接填充
-            if (remaining > 0) {
-                val unassigned = availableCells.filter { it !in assigned }
-                for (cell in unassigned.shuffled(random)) {
-                    if (remaining <= 0) break
-                    hexMap.cells[cell.first][cell.second].terrain = terrain
-                    assigned.add(cell)
-                    remaining--
-                }
-            }
-        }
-    }
-
-    /**
-     * BFS扩散生长团块
+     * 生长小规模聚团
      */
     private fun growCluster(
         hexMap: HexMap,
-        start: Pair<Int, Int>,
+        startX: Int,
+        startY: Int,
         terrain: TerrainType,
         maxSize: Int,
-        assigned: Set<Pair<Int, Int>>,
         random: Random
     ): List<Pair<Int, Int>> {
         val cluster = mutableListOf<Pair<Int, Int>>()
         val queue = ArrayDeque<Pair<Int, Int>>()
-        queue.add(start)
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        queue.add(Pair(startX, startY))
 
         while (queue.isNotEmpty() && cluster.size < maxSize) {
             val current = queue.removeFirst()
-            if (!hexMap.isValidCell(current.first, current.second)) continue
-            if (current in assigned) continue
-            if (current in cluster) continue
 
-            // 添加到团块
+            if (!hexMap.isValidCell(current.first, current.second)) continue
+            if (current in visited) continue
+            if (hexMap.cells[current.first][current.second].terrain != TerrainType.PLAIN) continue
+
+            visited.add(current)
             cluster.add(current)
             hexMap.cells[current.first][current.second].terrain = terrain
 
-            // 探索相邻格子
             val neighbors = hexMap.getNeighborCoords(current.first, current.second)
             for (neighbor in neighbors) {
                 if (!hexMap.isValidCell(neighbor.first, neighbor.second)) continue
-                if (neighbor in assigned) continue
-                if (neighbor in cluster) continue
-                // 按概率决定是否扩展
-                if (random.nextFloat() < CLUSTER_SPREAD_PROBABILITY) {
+                if (neighbor in visited) continue
+                if (hexMap.cells[neighbor.first][neighbor.second].terrain != TerrainType.PLAIN) continue
+                if (random.nextFloat() < CLUSTER_PROBABILITY) {
                     queue.add(neighbor)
                 }
             }
@@ -259,58 +200,287 @@ object TerrainGenerator {
     }
 
     /**
-     * 为建筑群设置防御工事（6条边统一类型）
+     * 初始分配建筑群
      */
-    private fun assignUrbanFortifications(hexMap: HexMap, random: Random) {
+    private fun assignInitialUrbanTerrains(
+        hexMap: HexMap,
+        totalCount: Int,
+        random: Random
+    ) {
+        if (totalCount <= 0) return
+
+        var remaining = totalCount
+
+        while (remaining > 0) {
+            val seedX = random.nextInt(hexMap.width)
+            val seedY = random.nextInt(hexMap.height)
+
+            if (hexMap.cells[seedX][seedY].terrain != TerrainType.PLAIN) {
+                continue
+            }
+
+            val clusterSize = random.nextInt(URBAN_CLUSTER_MIN, min(URBAN_CLUSTER_MAX + 1, remaining + 1))
+            val actualSize = min(clusterSize, remaining)
+
+            val cluster = growCluster(hexMap, seedX, seedY, TerrainType.URBAN, actualSize, random)
+            remaining -= cluster.size
+        }
+    }
+
+    /**
+     * 检查并调整建筑群聚团数量
+     */
+    private fun adjustUrbanClusters(hexMap: HexMap, random: Random) {
+        // 识别所有建筑群聚团
+        val clusters = identifyUrbanClusters(hexMap)
+
+        val currentCount = clusters.size
+
+        if (currentCount < MIN_URBAN_CLUSTERS) {
+            // 需要添加更多建筑群聚团
+            val toAdd = MIN_URBAN_CLUSTERS - currentCount
+            for (i in 0 until toAdd) {
+                addRandomUrbanCluster(hexMap, random)
+            }
+        } else if (currentCount > MAX_URBAN_CLUSTERS) {
+            // 需要减少建筑群聚团
+            val toRemove = currentCount - MAX_URBAN_CLUSTERS
+            val removableClusters = clusters.filter { it.size <= 2 }  // 只移除小聚团
+            val toRemoveClusters = removableClusters.shuffled(random).take(toRemove)
+
+            for (cluster in toRemoveClusters) {
+                for (cell in cluster) {
+                    // 替换为平原
+                    hexMap.cells[cell.first][cell.second].terrain = TerrainType.PLAIN
+                }
+            }
+        }
+
+        // 重新识别聚团
+        val finalClusters = identifyUrbanClusters(hexMap)
+
+        // 确保每个聚团至少有一个格子
+        for (cluster in finalClusters) {
+            if (cluster.isEmpty()) continue
+        }
+    }
+
+    /**
+     * 识别所有建筑群聚团
+     * @return List of clusters, each cluster is a list of cell coordinates
+     */
+    private fun identifyUrbanClusters(hexMap: HexMap): List<List<Pair<Int, Int>>> {
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        val clusters = mutableListOf<List<Pair<Int, Int>>>()
+
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
-                if (hexMap.cells[x][y].terrain == TerrainType.URBAN) {
-                    // 随机选择一种非NONE的工事类型
-                    val fortType = urbanFortTypes.random(random)
-                    // 应用到所有6条边
-                    for (dir in 0..5) {
+                val pos = Pair(x, y)
+                if (pos in visited) continue
+                if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
+
+                // BFS找聚团
+                val cluster = mutableListOf<Pair<Int, Int>>()
+                val queue = ArrayDeque<Pair<Int, Int>>()
+                queue.add(pos)
+
+                while (queue.isNotEmpty()) {
+                    val current = queue.removeFirst()
+                    if (current in visited) continue
+                    if (!hexMap.isValidCell(current.first, current.second)) continue
+                    if (hexMap.cells[current.first][current.second].terrain != TerrainType.URBAN) continue
+
+                    visited.add(current)
+                    cluster.add(current)
+
+                    val neighbors = hexMap.getNeighborCoords(current.first, current.second)
+                    for (neighbor in neighbors) {
+                        if (neighbor !in visited) {
+                            queue.add(neighbor)
+                        }
+                    }
+                }
+
+                if (cluster.isNotEmpty()) {
+                    clusters.add(cluster)
+                }
+            }
+        }
+
+        return clusters
+    }
+
+    /**
+     * 添加随机建筑群聚团（在小聚团身边）
+     */
+    private fun addRandomUrbanCluster(hexMap: HexMap, random: Random) {
+        // 找到现有建筑群附近的可放置位置
+        val candidates = mutableListOf<Pair<Int, Int>>()
+
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                if (hexMap.cells[x][y].terrain != TerrainType.PLAIN) continue
+
+                // 检查是否与现有建筑群相邻
+                val neighbors = hexMap.getNeighborCoords(x, y)
+                val hasUrbanNeighbor = neighbors.any { (nx, ny) ->
+                    hexMap.isValidCell(nx, ny) &&
+                    hexMap.cells[nx][ny].terrain == TerrainType.URBAN
+                }
+
+                if (hasUrbanNeighbor) {
+                    candidates.add(Pair(x, y))
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            // 如果没有合适位置，随机放置
+            var attempts = 0
+            while (attempts < 100) {
+                val x = random.nextInt(hexMap.width)
+                val y = random.nextInt(hexMap.height)
+                if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
+                    hexMap.cells[x][y].terrain = TerrainType.URBAN
+                    return
+                }
+                attempts++
+            }
+            return
+        }
+
+        // 添加一个建筑群格子
+        val pos = candidates.random(random)
+        hexMap.cells[pos.first][pos.second].terrain = TerrainType.URBAN
+    }
+
+    /**
+     * 为建筑群设置防御工事
+     * 
+     * 规则：
+     * - 同一建筑群聚团：所有格子统一使用相同的防御工事类型
+     *   - 孤立格子（1格聚团）：栅栏或土墙，比例2:1
+     *   - 多格聚团：石墙
+     * - 同一聚团内部相邻边：没有防御工事
+     * - 不同聚团之间：没有防御工事
+     * - 聚团对外边界：设置为聚团的防御工事类型
+     */
+    private fun assignUrbanFortifications(hexMap: HexMap, random: Random) {
+        // 识别所有建筑群聚团
+        val clusters = identifyUrbanClusters(hexMap)
+        
+        // 构建聚团ID映射：格子坐标 -> 聚团索引
+        val clusterIdMap = mutableMapOf<Pair<Int, Int>, Int>()
+        clusters.forEachIndexed { index, cluster ->
+            cluster.forEach { pos -> clusterIdMap[pos] = index }
+        }
+
+        // 为每个聚团随机选择防御工事类型
+        val clusterFortTypes = mutableMapOf<Int, FortType>()
+        for ((clusterId, _) in clusters.withIndex()) {
+            val cluster = clusters[clusterId]
+            val fortType = if (cluster.size == 1) {
+                // 孤立建筑群：栅栏或土墙，比例2:1
+                if (random.nextFloat() < FENCE_RATIO) FortType.FENCE else FortType.EARTHWALL
+            } else {
+                // 多格聚团：石墙
+                FortType.STONEWALL
+            }
+            clusterFortTypes[clusterId] = fortType
+        }
+
+        // 清除所有现有的防御工事
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                for (dir in 0..5) {
+                    hexMap.edges[x][y][dir].fortification = FortType.NONE
+                }
+            }
+        }
+
+        // 为每个建筑群格子设置防御工事
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
+
+                val cellPos = Pair(x, y)
+                val currentClusterId = clusterIdMap[cellPos] ?: continue
+                val fortType = clusterFortTypes[currentClusterId] ?: continue
+
+                // 获取相邻格子坐标
+                val neighbors = hexMap.getNeighborCoords(x, y)
+
+                // 设置6条边的防御工事
+                for (dir in 0..5) {
+                    val neighbor = neighbors.getOrNull(dir) ?: continue
+                    val (nx, ny) = neighbor
+
+                    // 检查相邻格子是否属于同一聚团
+                    val neighborClusterId = if (hexMap.isValidCell(nx, ny)) clusterIdMap[neighbor] else null
+                    val isSameCluster = neighborClusterId == currentClusterId
+
+                    if (isSameCluster) {
+                        // 同一聚团内相邻格子：没有防御工事（保持NONE）
+                        // 不调用 setFortification，让它保持 NONE
+                    } else {
+                        // 外部边界：设置为聚团的防御工事类型
                         hexMap.setFortification(x, y, dir, fortType)
                     }
                 }
             }
         }
+        
+        // 后处理：确保不同聚团之间的防御工事被清除
+        // （由于上面逻辑已经正确处理，这里确保双向同步正确）
+        clearInterClusterFortifications(hexMap, clusterIdMap)
     }
 
     /**
-     * 检查是否与高山相邻
+     * 清除相邻不同建筑群聚团之间的防御工事
+     * 同时确保同一聚团内部的相邻边也没有防御工事
      */
-    private fun isNearMountain(hexMap: HexMap, x: Int, y: Int): Boolean {
-        return isAdjacentToTerrain(hexMap, x, y, TerrainType.MOUNTAIN)
-    }
-
-    /**
-     * 检查是否与指定地形相邻
-     */
-    private fun isAdjacentToTerrain(hexMap: HexMap, x: Int, y: Int, terrain: TerrainType): Boolean {
-        val neighbors = hexMap.getNeighbors(x, y)
-        return neighbors.any { it.terrain == terrain }
-    }
-
-    /**
-     * 获取地图边缘格子
-     */
-    private fun getEdgeCells(hexMap: HexMap): List<Pair<Int, Int>> {
-        val edgeCells = mutableListOf<Pair<Int, Int>>()
+    private fun clearInterClusterFortifications(hexMap: HexMap, clusterIdMap: Map<Pair<Int, Int>, Int>) {
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
-                if (isEdgeCell(Pair(x, y), hexMap)) {
-                    edgeCells.add(Pair(x, y))
+                if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
+
+                val cellPos = Pair(x, y)
+                val currentClusterId = clusterIdMap[cellPos] ?: continue
+
+                val neighbors = hexMap.getNeighborCoords(x, y)
+
+                for (dir in 0..5) {
+                    val neighbor = neighbors.getOrNull(dir) ?: continue
+                    val (nx, ny) = neighbor
+
+                    if (!hexMap.isValidCell(nx, ny)) continue
+                    if (hexMap.cells[nx][ny].terrain != TerrainType.URBAN) continue
+
+                    val neighborClusterId = clusterIdMap[neighbor] ?: continue
+
+                    // 如果是不同聚团，清除防御工事
+                    if (currentClusterId != neighborClusterId) {
+                        hexMap.setFortification(x, y, dir, FortType.NONE)
+                    }
+                    // 同一聚团内的相邻边也清除（确保没有防御工事）
+                    // 注意：由于上面已经处理了，这里不需要再清除
                 }
             }
         }
-        return edgeCells
     }
 
     /**
-     * 判断是否为边缘格子
+     * 清除所有非建筑群格子的防御工事（备用清理）
      */
-    private fun isEdgeCell(cell: Pair<Int, Int>, hexMap: HexMap): Boolean {
-        val (x, y) = cell
-        return x == 0 || x == hexMap.width - 1 || y == 0 || y == hexMap.height - 1
+    private fun clearNonUrbanFortifications(hexMap: HexMap) {
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                if (hexMap.cells[x][y].terrain == TerrainType.URBAN) continue
+
+                for (dir in 0..5) {
+                    hexMap.edges[x][y][dir].fortification = FortType.NONE
+                }
+            }
+        }
     }
 }

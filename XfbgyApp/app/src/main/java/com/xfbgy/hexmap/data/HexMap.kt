@@ -244,6 +244,19 @@ class HexMap(
     }
 
     /**
+     * 设置防御工事（仅设置当前格子，不同步到共享边）
+     * 用于建筑群防御工事独立设置的情况
+     * @param x 列坐标
+     * @param y 行坐标
+     * @param direction 方向(0~5)
+     * @param fortType 工事类型
+     */
+    fun setFortificationLocal(x: Int, y: Int, direction: Int, fortType: FortType) {
+        val edge = getEdge(x, y, direction) ?: return
+        edge.fortification = fortType
+    }
+
+    /**
      * 检查坐标是否有效
      */
     fun isValidCell(x: Int, y: Int): Boolean {
