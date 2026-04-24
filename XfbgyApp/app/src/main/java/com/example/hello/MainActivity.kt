@@ -9,6 +9,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.xfbgy.hexmap.ui.HexMapActivity
+import com.xfbgy.hexmap.ui.ComponentDebugActivity
 
 /**
  * 游戏启动页面
@@ -19,6 +20,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var titleText: TextView
     private lateinit var subtitleText: TextView
     private lateinit var startButton: Button
+    private lateinit var debugButton: Button
     private lateinit var widthInput: EditText
     private lateinit var heightInput: EditText
 
@@ -40,6 +42,7 @@ class MainActivity : AppCompatActivity() {
         titleText = findViewById(R.id.titleText)
         subtitleText = findViewById(R.id.subtitleText)
         startButton = findViewById(R.id.startButton)
+        debugButton = findViewById(R.id.debugButton)
         widthInput = findViewById(R.id.widthInput)
         heightInput = findViewById(R.id.heightInput)
     }
@@ -120,6 +123,12 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(intent)
             // 添加切换动画
+            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        }
+
+        debugButton.setOnClickListener {
+            val intent = Intent(this, ComponentDebugActivity::class.java)
+            startActivity(intent)
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
     }

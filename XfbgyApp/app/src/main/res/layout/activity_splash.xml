@@ -133,6 +133,20 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
+    <!-- 组件调试按钮 -->
+    <Button
+        android:id="@+id/debugButton"
+        android:layout_width="240dp"
+        android:layout_height="48dp"
+        android:text="组件调试"
+        android:textSize="16sp"
+        android:textColor="#FFFFFF"
+        android:background="@drawable/button_background"
+        android:layout_marginTop="16dp"
+        app:layout_constraintTop_toBottomOf="@id/startButton"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
     <!-- 版本信息 -->
     <TextView
         android:id="@+id/versionText"
