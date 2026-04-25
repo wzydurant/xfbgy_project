@@ -1,635 +1,357 @@
 package com.xfbgy.hexmap.generator
 
-import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.HexMap
 import com.xfbgy.hexmap.data.TerrainType
-import kotlin.math.abs
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * 河流生成器 - 简化版
- *
- * 生成规则：
- * 1. 从地图一侧边缘延伸河流到对侧边缘
- * 2. 至少一条河流要延伸到地图中央1/5范围
- * 3. 河流UI表现为交界线上的蓝色粗线（在HexMapView中绘制）
+ * 河流生成器
+ * 
+ * 边编号（顺时针）：
+ * - 0: 上边
+ * - 1: 右上边
+ * - 2: 右下边
+ * - 3: 下边
+ * - 4: 左下边
+ * - 5: 左上边
+ * 
+ * 共边关系：格子A的边N 与 格子B的边(N+3)%6 是同一物理边
+ * 
+ * 河流规则：
+ * 1. 河流只沿着两个格子之间的"共边"流动
+ * 2. 每条共边只标记一次，两侧格子自动同步
+ * 3. 河流从地图一条边缘进入，从对侧边缘离开
  */
 object RiverGenerator {
 
     /**
-     * 获取指定方向的偏移量（考虑奇偶行偏移）
-     * 0=上, 1=右上, 2=右下, 3=下, 4=左下, 5=左上
-     */
-    private fun getDirectionOffset(y: Int, direction: Int): Pair<Int, Int> {
-        // odd-r 布局：奇数行向右偏移半个格宽
-        return if (y % 2 == 1) {
-            // 奇数行（右偏）
-            when (direction) {
-                0 -> Pair(0, -1)   // 上
-                1 -> Pair(0, -1)   // 右上
-                2 -> Pair(0, 1)    // 右下
-                3 -> Pair(0, 1)    // 下
-                4 -> Pair(-1, 0)   // 左下
-                5 -> Pair(-1, 0)   // 左上
-                else -> Pair(0, 0)
-            }
-        } else {
-            // 偶数行
-            when (direction) {
-                0 -> Pair(0, -1)   // 上
-                1 -> Pair(-1, -1)  // 右上
-                2 -> Pair(1, 0)    // 右下
-                3 -> Pair(0, 1)    // 下
-                4 -> Pair(-1, 0)   // 左下
-                5 -> Pair(-1, -1)  // 左上
-                else -> Pair(0, 0)
-            }
-        }
-    }
-
-    /**
-     * 最大尝试次数（防止无限循环）
-     */
-    private const val MAX_ATTEMPTS = 50
-
-    /**
      * 单条河流最大长度
      */
-    private const val MAX_RIVER_LENGTH = 150
+    private const val MAX_RIVER_LENGTH = 200
 
     /**
-     * 计算地图中央区域半径（地图短边的1/5）
+     * 顺时针流动方向
      */
-    private fun getCentralRadius(hexMap: HexMap): Int {
-        return minOf(hexMap.width, hexMap.height) / 5
-    }
+    private const val CLOCKWISE = 0
+    
+    /**
+     * 逆时针流动方向
+     */
+    private const val COUNTER_CLOCKWISE = 1
 
     /**
      * 生成完整地图的河流系统
-     * @param hexMap 地图对象
-     * @param seed 随机种子（可选）
-     * @return 是否成功生成河流
      */
     fun generateRivers(hexMap: HexMap, seed: Long? = null): Boolean {
         val random = if (seed != null) Random(seed) else Random
 
-        // 清除所有现有河流（不清除防御工事）
+        // 清除所有现有河流
         clearAllRivers(hexMap)
 
-        // 计算地图中央
-        val centerX = hexMap.width / 2
-        val centerY = hexMap.height / 2
-        val centralRadius = getCentralRadius(hexMap)
+        // 生成2条河流
+        val numRivers = 2
 
-        val riverCells = mutableSetOf<Pair<Int, Int>>()
-
-        // 生成2-3条从边缘到边缘的河流
-        val numRivers = random.nextInt(2, 4)  // 2-3条
-
-        // 边缘对：上下、左右
-        val edgePairs = listOf(
-            Triple("top", "bottom", listOf(3, 0)),  // 方向：进入向下，离开向上
-            Triple("left", "right", listOf(4, 5, 1, 2))  // 方向：进入向左/右，离开向右/左
-        )
-
-        var riversReachingCenter = 0
-
-        for ((startSide, endSide, validDirs) in edgePairs) {
-            if (riverCells.size >= numRivers) break
-
-            val startCells = getEdgeCellsOnSide(hexMap, startSide, validDirs)
-            val endCells = getEdgeCellsOnSide(hexMap, endSide, validDirs)
-
-            if (startCells.isEmpty() || endCells.isEmpty()) continue
-
-            // 选择起始和结束格子
-            val start = startCells.random(random)
-            val end = endCells.random(random)
-
-            // 生成河流路径
-            val path = generateRiverPath(hexMap, start, end, centerX, centerY, centralRadius, random)
-
-            if (path.isNotEmpty()) {
-                riverCells.addAll(path)
-
-                // 检查是否到达中央
-                val reachesCenter = path.any { (x, y) ->
-                    val dist = sqrt(((x - centerX) * (x - centerX) + (y - centerY) * (y - centerY)).toDouble())
-                    dist <= centralRadius
-                }
-                if (reachesCenter) riversReachingCenter++
-            }
+        for (i in 0 until numRivers) {
+            generateSingleRiver(hexMap, random)
         }
 
-        // 如果没有河流到达中央，强制生成一条穿过中央的河流
-        if (riversReachingCenter == 0) {
-            generateCentralRiver(hexMap, centerX, centerY, centralRadius, random, riverCells)
-        }
+        // 后处理：确保共边两侧都有河流（使河流变粗）
+        synchronizeRiverEdges(hexMap)
 
-        // 生成支流
-        generateTributaries(hexMap, riverCells.toList(), random)
-
-        // 生成后验证和修复
-        validateAndFixRivers(hexMap, centerX, centerY, centralRadius, random)
-
-        return riverCells.size >= 3
+        return true
     }
 
     /**
-     * 清除所有河流但保留防御工事
+     * 同步河流边：确保共边两侧格子都有河流标记
+     * 这样渲染时河流会显示为更粗的线
+     */
+    private fun synchronizeRiverEdges(hexMap: HexMap) {
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                for (dir in 0..5) {
+                    // 如果当前格子的这条边有河流
+                    if (hexMap.cells[x][y].hasRiver(dir)) {
+                        // 确保相邻格子对应边也有河流
+                        val neighbors = hexMap.getNeighborCoords(x, y)
+                        if (dir < neighbors.size) {
+                            val neighbor = neighbors[dir]
+                            if (hexMap.isValidCell(neighbor.first, neighbor.second)) {
+                                val oppositeDir = (dir + 3) % 6
+                                hexMap.cells[neighbor.first][neighbor.second].setRiver(oppositeDir, true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 清除所有河流
      */
     private fun clearAllRivers(hexMap: HexMap) {
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 for (dir in 0..5) {
-                    hexMap.edges[x][y][dir].hasRiver = false
+                    hexMap.cells[x][y].setRiver(dir, false)
                 }
             }
         }
     }
 
     /**
-     * 获取指定边缘的格子
+     * 生成单条河流
      */
-    private fun getEdgeCellsOnSide(hexMap: HexMap, side: String, validDirs: List<Int>): List<Triple<Int, Int, Int>> {
-        val cells = mutableListOf<Triple<Int, Int, Int>>()
-
+    private fun generateSingleRiver(hexMap: HexMap, random: Random) {
+        // 随机选择入口边缘：0=top, 1=right, 2=bottom, 3=left
+        val border = random.nextInt(4)
+        
+        val startCell: Pair<Int, Int>
+        val entryEdge: Int
+        
+        when (border) {
+            0 -> {
+                // y=0 顶部：纵向河流
+                val candidates = getTopBorderCells(hexMap)
+                if (candidates.isEmpty()) return
+                startCell = candidates.random(random)
+                entryEdge = 0  // 上边
+            }
+            1 -> {
+                // x=X 右侧：横向河流
+                val candidates = getRightBorderCells(hexMap)
+                if (candidates.isEmpty()) return
+                startCell = candidates.random(random)
+                entryEdge = if (random.nextBoolean()) 1 else 2
+            }
+            2 -> {
+                // y=Y 底部：纵向河流
+                val candidates = getBottomBorderCells(hexMap)
+                if (candidates.isEmpty()) return
+                startCell = candidates.random(random)
+                entryEdge = 3  // 下边
+            }
+            else -> {
+                // x=0 左侧：横向河流
+                val candidates = getLeftBorderCells(hexMap)
+                if (candidates.isEmpty()) return
+                startCell = candidates.random(random)
+                entryEdge = if (random.nextBoolean()) 4 else 5
+            }
+        }
+        
+        // 生成河流路径
+        generateRiverPath(hexMap, startCell.first, startCell.second, entryEdge, random)
+    }
+    
+    /**
+     * 获取顶部边缘的格子（y=0）
+     */
+    private fun getTopBorderCells(hexMap: HexMap): List<Pair<Int, Int>> {
+        val cells = mutableListOf<Pair<Int, Int>>()
+        for (x in 0 until hexMap.width) {
+            val cell = hexMap.cells[x][0]
+            if (cell.terrain != TerrainType.MOUNTAIN && cell.terrain != TerrainType.URBAN) {
+                cells.add(Pair(x, 0))
+            }
+        }
+        return cells
+    }
+    
+    /**
+     * 获取底部边缘的格子（y=Y-1）
+     */
+    private fun getBottomBorderCells(hexMap: HexMap): List<Pair<Int, Int>> {
+        val cells = mutableListOf<Pair<Int, Int>>()
+        val y = hexMap.height - 1
+        for (x in 0 until hexMap.width) {
+            val cell = hexMap.cells[x][y]
+            if (cell.terrain != TerrainType.MOUNTAIN && cell.terrain != TerrainType.URBAN) {
+                cells.add(Pair(x, y))
+            }
+        }
+        return cells
+    }
+    
+    /**
+     * 获取左侧边缘的格子（x=0）
+     */
+    private fun getLeftBorderCells(hexMap: HexMap): List<Pair<Int, Int>> {
+        val cells = mutableListOf<Pair<Int, Int>>()
         for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                val cell = hexMap.cells[x][y]
-                // 跳过高山和建筑群
-                if (cell.terrain == TerrainType.MOUNTAIN) continue
-                if (cell.terrain == TerrainType.URBAN) continue
-
-                when (side) {
-                    "top" -> if (y == 0) cells.add(Triple(x, y, 3))  // 进入方向朝下
-                    "bottom" -> if (y == hexMap.height - 1) cells.add(Triple(x, y, 0))  // 进入方向朝上
-                    "left" -> if (x == 0) {
-                        val dir = if (y % 2 == 0) 2 else 1
-                        if (dir in validDirs) cells.add(Triple(x, y, dir))
-                    }
-                    "right" -> if (x == hexMap.width - 1) {
-                        val dir = if (y % 2 == 0) 4 else 5
-                        if (dir in validDirs) cells.add(Triple(x, y, dir))
-                    }
-                }
+            val cell = hexMap.cells[0][y]
+            if (cell.terrain != TerrainType.MOUNTAIN && cell.terrain != TerrainType.URBAN) {
+                cells.add(Pair(0, y))
+            }
+        }
+        return cells
+    }
+    
+    /**
+     * 获取右侧边缘的格子（x=X-1）
+     */
+    private fun getRightBorderCells(hexMap: HexMap): List<Pair<Int, Int>> {
+        val cells = mutableListOf<Pair<Int, Int>>()
+        val x = hexMap.width - 1
+        for (y in 0 until hexMap.height) {
+            val cell = hexMap.cells[x][y]
+            if (cell.terrain != TerrainType.MOUNTAIN && cell.terrain != TerrainType.URBAN) {
+                cells.add(Pair(x, y))
             }
         }
         return cells
     }
 
     /**
-     * 生成河流路径（从一边缘到对侧边缘）
+     * 生成河流路径
+     * 
+     * 核心逻辑：
+     * 1. 河流从入口边进入，但入口边不标记（因为入口边通向地图外）
+     * 2. 选择出口边，标记这条边为河流（共边）
+     * 3. 移动到下一个格子，新格子的入口边已经通过setRiver同步设置
+     * 4. 选择新的出口边，重复
+     * 5. 直到河流到达对侧边缘
      */
     private fun generateRiverPath(
         hexMap: HexMap,
-        start: Triple<Int, Int, Int>,  // x, y, enterDir
-        end: Triple<Int, Int, Int>,
-        centerX: Int, centerY: Int, centralRadius: Int,
+        startX: Int,
+        startY: Int,
+        entryEdge: Int,
         random: Random
-    ): List<Pair<Int, Int>> {
-        val path = mutableListOf<Pair<Int, Int>>()
-
-        var currentX = start.first
-        var currentY = start.second
-        var prevDir = (start.third + 3) % 6  // 反向作为初始方向
-
-        // 添加起点
-        path.add(Pair(currentX, currentY))
-
+    ) {
+        var currentX = startX
+        var currentY = startY
+        
+        // 入口边：河流从地图边缘流入，不标记
+        val entryDir = entryEdge
+        
+        // 选择出口边
+        val exitEdges = getExitEdges(hexMap, currentX, currentY, entryDir)
+        if (exitEdges.isEmpty()) return
+        
+        // 根据权重选择出口边
+        val exitDir = chooseExitEdge(exitEdges, entryDir, random)
+        
+        // 标记出口边为河流（共边，两侧格子都会标记）
+        hexMap.setRiver(currentX, currentY, exitDir, true)
+        
+        // 获取下一个格子
+        val neighbors = hexMap.getNeighborCoords(currentX, currentY)
+        if (exitDir >= neighbors.size) return
+        var nextX = neighbors[exitDir].first
+        var nextY = neighbors[exitDir].second
+        
+        // 检查是否到达地图边缘
+        if (!hexMap.isValidCell(nextX, nextY)) return
+        
         var steps = 0
+        
         while (steps < MAX_RIVER_LENGTH) {
             steps++
-
-            // 选择方向（优先向目标方向）
-            val dir = chooseDirection(currentX, currentY, end.first, end.second, prevDir, random)
-
-            val offset = getDirectionOffset(currentY, dir)
-            val nextX = currentX + offset.first
-            val nextY = currentY + offset.second
-
-            // 检查是否到达目标
-            if (nextX == end.first && nextY == end.second) {
-                // 添加最后一条边
-                if (isValidEdge(hexMap, currentX, currentY, dir)) {
-                    hexMap.setRiver(currentX, currentY, dir, true)
-                }
-                break
-            }
-
-            // 检查是否在地图范围内
-            if (!hexMap.isValidCell(nextX, nextY)) {
-                // 河流流出地图，停止
-                break
-            }
-
-            // 检查地形
+            
+            // 当前格子的入口边是出口边的对面
+            // 这条共边已经在上一个格子的setRiver时同步设置了
+            val currentEntryDir = (exitDir + 3) % 6
+            
+            // 检查下一个格子地形
             val nextCell = hexMap.cells[nextX][nextY]
-            if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) {
-                break
-            }
-
-            // 检查边是否有效
-            if (!isValidEdge(hexMap, currentX, currentY, dir)) {
-                break
-            }
-
-            // 添加河流边
-            hexMap.setRiver(currentX, currentY, dir, true)
-            path.add(Pair(nextX, nextY))
-
+            if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) break
+            
+            // 选择出口边（排除入口边，避免回退）
+            val nextExitEdges = getExitEdges(hexMap, nextX, nextY, currentEntryDir)
+            if (nextExitEdges.isEmpty()) break
+            
+            // 选择出口边
+            val nextExitDir = chooseExitEdge(nextExitEdges, currentEntryDir, random)
+            
+            // 标记出口边为河流
+            hexMap.setRiver(nextX, nextY, nextExitDir, true)
+            
+            // 获取下一个格子
+            val nextNeighbors = hexMap.getNeighborCoords(nextX, nextY)
+            if (nextExitDir >= nextNeighbors.size) break
+            val newX = nextNeighbors[nextExitDir].first
+            val newY = nextNeighbors[nextExitDir].second
+            
+            // 检查是否到达地图边缘
+            if (!hexMap.isValidCell(newX, newY)) break
+            
             // 移动到下一个格子
             currentX = nextX
             currentY = nextY
-            prevDir = (dir + 3) % 6
-        }
-
-        return path
-    }
-
-    /**
-     * 生成穿过中央的河流
-     */
-    private fun generateCentralRiver(
-        hexMap: HexMap,
-        centerX: Int, centerY: Int, centralRadius: Int,
-        random: Random,
-        riverCells: MutableSet<Pair<Int, Int>>
-    ) {
-        // 随机选择水平或垂直穿越
-        if (random.nextBoolean()) {
-            // 水平穿越（左右边缘）
-            val y = centerY.coerceIn(0, hexMap.height - 1)
-            val startX = 0
-            val endX = hexMap.width - 1
-
-            for (x in startX until endX) {
-                val cell = hexMap.cells[x][y]
-                if (cell.terrain == TerrainType.MOUNTAIN || cell.terrain == TerrainType.URBAN) continue
-
-                val nextX = x + 1
-                if (nextX >= hexMap.width) break
-
-                val nextCell = hexMap.cells[nextX][y]
-                if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) continue
-
-                hexMap.setRiver(x, y, 2, true)  // 向右
-                riverCells.add(Pair(x, y))
-            }
-        } else {
-            // 垂直穿越（上下边缘）
-            val x = centerX.coerceIn(0, hexMap.width - 1)
-            val startY = 0
-            val endY = hexMap.height - 1
-
-            for (y in startY until endY) {
-                val cell = hexMap.cells[x][y]
-                if (cell.terrain == TerrainType.MOUNTAIN || cell.terrain == TerrainType.URBAN) continue
-
-                hexMap.setRiver(x, y, 3, true)  // 向下
-                riverCells.add(Pair(x, y))
-            }
+            nextX = newX
+            nextY = newY
         }
     }
 
     /**
-     * 生成支流
+     * 获取可以作为出口的边
      */
-    private fun generateTributaries(
-        hexMap: HexMap,
-        riverCells: List<Pair<Int, Int>>,
-        random: Random
-    ) {
-        if (riverCells.size < 3) return
-
-        // 选择2-4个节点生成支流
-        val numBranches = random.nextInt(2, 5)
-        val candidates = riverCells.filterIndexed { index, _ ->
-            index > 0 && index < riverCells.size - 1
+    private fun getExitEdges(hexMap: HexMap, x: Int, y: Int, excludeDir: Int? = null): List<Int> {
+        val exitDirs = mutableListOf<Int>()
+        
+        for (dir in 0..5) {
+            // 排除入口边（避免回退）
+            if (dir == excludeDir) continue
+            
+            val neighbors = hexMap.getNeighborCoords(x, y)
+            if (dir >= neighbors.size) continue
+            val neighbor = neighbors[dir]
+            
+            // 检查邻居是否有效
+            if (!hexMap.isValidCell(neighbor.first, neighbor.second)) continue
+            
+            // 检查邻居地形
+            val neighborCell = hexMap.cells[neighbor.first][neighbor.second]
+            if (neighborCell.terrain == TerrainType.MOUNTAIN) continue
+            if (neighborCell.terrain == TerrainType.URBAN) continue
+            
+            exitDirs.add(dir)
         }
-
-        for (i in 0 until minOf(numBranches, candidates.size)) {
-            val cell = candidates.random(random)
-            val branchDir = random.nextInt(0, 6)
-            val branchLength = random.nextInt(2, 8)
-
-            generateBranch(hexMap, cell.first, cell.second, branchDir, branchLength, random)
-        }
+        
+        return exitDirs
     }
 
     /**
-     * 生成单条支流
+     * 根据权重选择出口边
      */
-    private fun generateBranch(
-        hexMap: HexMap,
-        startX: Int, startY: Int,
-        direction: Int,
-        maxLength: Int,
-        random: Random
-    ) {
-        var currentX = startX
-        var currentY = startY
-        var prevDir = direction
-
-        for (step in 0 until maxLength) {
-            val dir = if (random.nextFloat() < 0.85f) {
-                prevDir
-            } else {
-                if (random.nextBoolean()) (prevDir + 1) % 6 else (prevDir + 5) % 6
-            }
-
-            val offset = getDirectionOffset(currentY, dir)
-            val nextX = currentX + offset.first
-            val nextY = currentY + offset.second
-
-            if (!hexMap.isValidCell(nextX, nextY)) break
-
-            val nextCell = hexMap.cells[nextX][nextY]
-            if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) break
-
-            if (!isValidEdge(hexMap, currentX, currentY, dir)) break
-
-            hexMap.setRiver(currentX, currentY, dir, true)
-            currentX = nextX
-            currentY = nextY
-            prevDir = (dir + 3) % 6
-        }
-    }
-
-    /**
-     * 选择方向
-     */
-    private fun chooseDirection(
-        currentX: Int, currentY: Int,
-        targetX: Int, targetY: Int,
-        prevDir: Int,
+    private fun chooseExitEdge(
+        exitEdges: List<Int>,
+        entryDir: Int,
         random: Random
     ): Int {
-        val dx = targetX - currentX
-        val dy = targetY - currentY
-
-        val preferredDirs = mutableListOf<Int>()
-
-        // 垂直方向
-        if (dy < -1) preferredDirs.add(0)  // 向上
-        else if (dy > 1) preferredDirs.add(3)  // 向下
-
-        // 水平方向（根据奇偶行）
-        if (dx < -1) {
-            if (currentY % 2 == 0) preferredDirs.add(5) else preferredDirs.add(4)
-        } else if (dx > 1) {
-            if (currentY % 2 == 0) preferredDirs.add(2) else preferredDirs.add(1)
-        }
-
-        // 80%概率选择优先方向
-        if (preferredDirs.isNotEmpty() && random.nextFloat() < 0.8f) {
-            return preferredDirs.random(random)
-        }
-
-        // 惯性方向
-        return if (random.nextFloat() < 0.85f) {
-            listOf(prevDir, (prevDir + 1) % 6, (prevDir + 5) % 6).random(random)
-        } else {
-            listOf((prevDir + 2) % 6, (prevDir + 4) % 6).random(random)
-        }
-    }
-
-    /**
-     * 检查边是否有效
-     */
-    private fun isValidEdge(hexMap: HexMap, x: Int, y: Int, direction: Int): Boolean {
-        if (!hexMap.isValidCell(x, y)) return false
-
-        val cell = hexMap.cells[x][y]
-        if (cell.terrain == TerrainType.MOUNTAIN || cell.terrain == TerrainType.URBAN) return false
-
-        val offset = getDirectionOffset(y, direction)
-        val neighborX = x + offset.first
-        val neighborY = y + offset.second
-
-        if (!hexMap.isValidCell(neighborX, neighborY)) return true
-
-        val neighborCell = hexMap.cells[neighborX][neighborY]
-        return neighborCell.terrain != TerrainType.MOUNTAIN && neighborCell.terrain != TerrainType.URBAN
-    }
-
-    /**
-     * 验证并修复河流
-     * 1. 确保河流两端都在边缘
-     * 2. 确保至少一条河流到达中央
-     */
-    private fun validateAndFixRivers(
-        hexMap: HexMap,
-        centerX: Int, centerY: Int, centralRadius: Int,
-        random: Random
-    ) {
-        // 找到所有河流边
-        val riverEdges = mutableListOf<Triple<Int, Int, Int>>()  // x, y, dir
-
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                for (dir in 0..5) {
-                    if (hexMap.edges[x][y][dir].hasRiver) {
-                        riverEdges.add(Triple(x, y, dir))
-                    }
-                }
+        if (exitEdges.size == 1) return exitEdges[0]
+        
+        // 计算每个出口边的权重
+        val weights = mutableMapOf<Int, Double>()
+        
+        // 顺时针和逆时针的相邻边权重更高
+        val cwDir = (entryDir + 1) % 6
+        val ccwDir = (entryDir + 5) % 6
+        
+        for (dir in exitEdges) {
+            var weight = 1.0
+            
+            if (dir == cwDir) {
+                weight = 5.0
+            } else if (dir == ccwDir) {
+                weight = 5.0
+            } else {
+                weight = 0.5
             }
+            
+            weights[dir] = weight
         }
-
-        if (riverEdges.isEmpty()) return
-
-        // 检查是否有河流到达中央
-        var hasCentralRiver = false
-        for ((x, y, _) in riverEdges) {
-            val dist = sqrt(((x - centerX) * (x - centerX) + (y - centerY) * (y - centerY)).toDouble())
-            if (dist <= centralRadius) {
-                hasCentralRiver = true
-                break
-            }
+        
+        // 加权随机选择
+        val totalWeight = weights.values.sum()
+        var r = random.nextDouble() * totalWeight
+        
+        for (dir in exitEdges) {
+            r -= weights[dir] ?: 0.0
+            if (r <= 0) return dir
         }
-
-        // 如果没有中央河流，从最近的河流延伸一条到中央
-        if (!hasCentralRiver) {
-            extendToCenter(hexMap, centerX, centerY, centralRadius, random)
-        }
-
-        // 检查河流是否两端都在边缘，如果不是则补全
-        extendToEdges(hexMap, random)
-    }
-
-    /**
-     * 延伸河流到中央
-     */
-    private fun extendToCenter(
-        hexMap: HexMap,
-        centerX: Int, centerY: Int, centralRadius: Int,
-        random: Random
-    ) {
-        // 找到离中央最近的河流格子
-        var closestCell: Pair<Int, Int>? = null
-        var minDist = Double.MAX_VALUE
-
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                for (dir in 0..5) {
-                    if (hexMap.edges[x][y][dir].hasRiver) {
-                        val dist = sqrt(((x - centerX) * (x - centerX) + (y - centerY) * (y - centerY)).toDouble())
-                        if (dist < minDist) {
-                            minDist = dist
-                            closestCell = Pair(x, y)
-                        }
-                    }
-                }
-            }
-        }
-
-        if (closestCell == null) return
-
-        // 从该格子延伸一条河流到中央
-        var currentX = closestCell.first
-        var currentY = closestCell.second
-        var prevDir = 0
-
-        var steps = 0
-        while (steps < 50) {
-            steps++
-
-            val dir = chooseDirection(currentX, currentY, centerX, centerY, prevDir, random)
-            val offset = getDirectionOffset(currentY, dir)
-            val nextX = currentX + offset.first
-            val nextY = currentY + offset.second
-
-            val dist = sqrt(((nextX - centerX) * (nextX - centerX) + (nextY - centerY) * (nextY - centerY)).toDouble())
-            if (dist <= centralRadius) {
-                // 到达中央
-                if (isValidEdge(hexMap, currentX, currentY, dir)) {
-                    hexMap.setRiver(currentX, currentY, dir, true)
-                }
-                break
-            }
-
-            if (!hexMap.isValidCell(nextX, nextY)) break
-
-            val nextCell = hexMap.cells[nextX][nextY]
-            if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) break
-
-            if (!isValidEdge(hexMap, currentX, currentY, dir)) break
-
-            hexMap.setRiver(currentX, currentY, dir, true)
-            currentX = nextX
-            currentY = nextY
-            prevDir = (dir + 3) % 6
-        }
-    }
-
-    /**
-     * 延伸河流到地图边缘
-     * 找到所有河流端点（只有一个方向有河流的格子），然后延伸到地图边缘
-     */
-    private fun extendToEdges(hexMap: HexMap, random: Random) {
-        // 找到所有河流端点（只有一个方向有河流的格子）
-        val endpoints = mutableListOf<Triple<Int, Int, Int>>()  // x, y, exitDir
-
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                val riverDirs = mutableListOf<Int>()
-                for (dir in 0..5) {
-                    if (hexMap.edges[x][y][dir].hasRiver) {
-                        riverDirs.add(dir)
-                    }
-                }
-
-                // 端点：只有一个方向有河流
-                if (riverDirs.size == 1) {
-                    val exitDir = riverDirs[0]
-                    val offset = getDirectionOffset(y, exitDir)
-                    val neighborX = x + offset.first
-                    val neighborY = y + offset.second
-
-                    // 如果邻居不在地图内，这个端点已经在边缘了
-                    if (!hexMap.isValidCell(neighborX, neighborY)) {
-                        continue
-                    }
-
-                    endpoints.add(Triple(x, y, exitDir))
-                }
-            }
-        }
-
-        // 延伸每个端点到地图边缘
-        for ((startX, startY, startDir) in endpoints) {
-            extendRiverEndpoint(hexMap, startX, startY, startDir, random)
-        }
-    }
-
-    /**
-     * 延伸单个河流端点到地图边缘
-     */
-    private fun extendRiverEndpoint(
-        hexMap: HexMap,
-        startX: Int,
-        startY: Int,
-        startDir: Int,
-        random: Random
-    ) {
-        var currentX = startX
-        var currentY = startY
-        var prevDir = startDir
-
-        // 沿着开始方向继续延伸
-        var dir = startDir
-
-        for (step in 0 until 50) {
-            val offset = getDirectionOffset(currentY, dir)
-            val nextX = currentX + offset.first
-            val nextY = currentY + offset.second
-
-            // 检查是否到达地图边缘
-            if (!hexMap.isValidCell(nextX, nextY)) {
-                // 已经到达地图边缘，设置河流边
-                if (isValidEdge(hexMap, currentX, currentY, dir)) {
-                    hexMap.setRiver(currentX, currentY, dir, true)
-                }
-                break
-            }
-
-            // 检查地形
-            val nextCell = hexMap.cells[nextX][nextY]
-            if (nextCell.terrain == TerrainType.MOUNTAIN || nextCell.terrain == TerrainType.URBAN) {
-                break
-            }
-
-            // 检查边是否有效
-            if (!isValidEdge(hexMap, currentX, currentY, dir)) {
-                break
-            }
-
-            // 添加河流边
-            hexMap.setRiver(currentX, currentY, dir, true)
-
-            // 检查下一个格子是否是端点（只有一个方向有河流）
-            val nextRiverDirs = mutableListOf<Int>()
-            for (d in 0..5) {
-                if (hexMap.edges[nextX][nextY][d].hasRiver) {
-                    nextRiverDirs.add(d)
-                }
-            }
-
-            // 如果下一个格子已经有多条河流边，不再继续延伸
-            if (nextRiverDirs.size > 1) {
-                break
-            }
-
-            // 继续延伸
-            currentX = nextX
-            currentY = nextY
-            prevDir = (dir + 3) % 6
-
-            // 偶尔改变方向
-            if (random.nextFloat() < 0.3f) {
-                dir = if (random.nextBoolean()) (prevDir + 1) % 6 else (prevDir + 5) % 6
-            }
-        }
+        
+        return exitEdges.last()
     }
 }

@@ -144,7 +144,7 @@ class HexMapActivity : AppCompatActivity() {
      */
     private fun showEdgeInfo(direction: Int) {
         val cell = hexMapView.currentSelectedCell ?: return
-        val edge = hexMapView.getMap()?.getEdge(cell.x, cell.y, direction) ?: return
+        val edge = cell.edges[direction]
         infoPanelView.showEdgeInfo(cell, direction, edge)
     }
 

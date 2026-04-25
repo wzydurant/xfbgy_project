@@ -320,10 +320,8 @@ class HexMapView @JvmOverloads constructor(
      * - 工事类型对应颜色：栅栏-褐色，土墙-灰色，石墙-白色
      */
     private fun drawEdgeProperties(canvas: Canvas, cell: HexCell, centerX: Float, centerY: Float) {
-        val map = hexMap ?: return
-
         for (dir in 0 until 6) {
-            val edge = map.getEdge(cell.x, cell.y, dir) ?: continue
+            val edge = cell.edges[dir]
 
             // 计算边的两个顶点
             val vertex1 = hexVertices[dir]

@@ -18,17 +18,11 @@ object MapGenerator {
 
     /**
      * 生成完整地图
-     *
-     * @param width 地图宽度（20-40）
-     * @param height 地图高度（20-40）
-     * @param seed 随机种子（可选）
-     * @return 生成的 HexMap 实例
      */
     fun generateMap(width: Int = 30, height: Int = 30, seed: Long? = null): HexMap {
-        // 创建地图
         val hexMap = HexMap(width, height)
 
-        // 先清除边（用于基础地形效果计算）
+        // 先清除边
         hexMap.clearAllEdges()
 
         // 生成地形（会设置防御工事和基础边效果）
@@ -76,7 +70,6 @@ object MapGenerator {
      * 2. 清除相邻不同建筑群之间的防御工事
      */
     private fun finalValidationAndFix(hexMap: HexMap) {
-        // 识别所有建筑群聚团
         val clusters = identifyUrbanClusters(hexMap)
 
         // 构建聚团ID映射
@@ -93,7 +86,7 @@ object MapGenerator {
                 val neighbors = hexMap.getNeighborCoords(x, y)
 
                 for (dir in 0..5) {
-                    val edge = hexMap.getEdge(x, y, dir) ?: continue
+                    val edge = cell.edges[dir]
                     val neighbor = neighbors.getOrNull(dir) ?: continue
                     val (nx, ny) = neighbor
 
@@ -101,23 +94,23 @@ object MapGenerator {
                     if (cell.terrain != TerrainType.URBAN) {
                         if (edge.fortification != FortType.NONE) {
                             edge.fortification = FortType.NONE
-                            // 同步相邻格子
                             if (hexMap.isValidCell(nx, ny)) {
                                 val oppositeDir = (dir + 3) % 6
-                                hexMap.edges[nx][ny][oppositeDir].fortification = FortType.NONE
+                                hexMap.cells[nx][ny].edges[oppositeDir].fortification = FortType.NONE
                             }
                         }
                         continue
                     }
 
                     // 检查2：相邻不同建筑群之间不应该有防御工事
-                    if (currentClusterId != null && hexMap.isValidCell(nx, ny) && hexMap.cells[nx][ny].terrain == TerrainType.URBAN) {
+                    if (currentClusterId != null && hexMap.isValidCell(nx, ny) &&
+                        hexMap.cells[nx][ny].terrain == TerrainType.URBAN) {
                         val neighborClusterId = clusterIdMap[neighbor]
                         if (neighborClusterId != null && neighborClusterId != currentClusterId) {
                             if (edge.fortification != FortType.NONE) {
                                 edge.fortification = FortType.NONE
                                 val oppositeDir = (dir + 3) % 6
-                                hexMap.edges[nx][ny][oppositeDir].fortification = FortType.NONE
+                                hexMap.cells[nx][ny].edges[oppositeDir].fortification = FortType.NONE
                             }
                         }
                     }
@@ -139,7 +132,6 @@ object MapGenerator {
                 if (pos in visited) continue
                 if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
 
-                // BFS找聚团
                 val cluster = mutableListOf<Pair<Int, Int>>()
                 val queue = ArrayDeque<Pair<Int, Int>>()
                 queue.add(pos)

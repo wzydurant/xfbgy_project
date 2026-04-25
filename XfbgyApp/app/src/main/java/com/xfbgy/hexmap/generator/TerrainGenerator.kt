@@ -7,15 +7,15 @@ import kotlin.math.min
 import kotlin.random.Random
 
 /**
- * 地形生成器 - 简化版
- *
- * 生成策略：
- * 1. 生成四种地形（高山、建筑群、山地/森林、平原）
- * 2. 检查建筑群聚团数量，少了添加，多了减少
- * 3. 防御工事规则：
- *    - 孤立建筑群：栅栏与土墙比例2:1
- *    - 聚团建筑群：石墙
- *    - 聚团内部相邻边：无防御工事
+ * 地形生成器
+ * 
+ * 防御工事生成规则：
+ * 1. 为每个建筑群聚团设置统一的防御工事类型
+ *    - 孤立格子（1格聚团）：栅栏或土墙，比例2:1
+ *    - 多格聚团：石墙
+ * 2. 每个建筑群格子六面全包围防御（6条边都设置防御工事）
+ * 3. 不同聚团相邻的边：防御工事等级降为"无"
+ * 4. 同一聚团内相邻的边：防御工事等级降为"无"
  */
 object TerrainGenerator {
 
@@ -255,14 +255,6 @@ object TerrainGenerator {
                 }
             }
         }
-
-        // 重新识别聚团
-        val finalClusters = identifyUrbanClusters(hexMap)
-
-        // 确保每个聚团至少有一个格子
-        for (cluster in finalClusters) {
-            if (cluster.isEmpty()) continue
-        }
     }
 
     /**
@@ -358,12 +350,12 @@ object TerrainGenerator {
      * 为建筑群设置防御工事
      * 
      * 规则：
-     * - 同一建筑群聚团：所有格子统一使用相同的防御工事类型
-     *   - 孤立格子（1格聚团）：栅栏或土墙，比例2:1
-     *   - 多格聚团：石墙
-     * - 同一聚团内部相邻边：没有防御工事
-     * - 不同聚团之间：没有防御工事
-     * - 聚团对外边界：设置为聚团的防御工事类型
+     * 1. 每个建筑群聚团有统一的防御工事类型
+     *    - 孤立格子（1格聚团）：栅栏或土墙，比例2:1
+     *    - 多格聚团：石墙
+     * 2. 每个建筑群格子六面全包围（6条边都设置防御工事）
+     * 3. 同一聚团内相邻格子之间的边：防御工事降为"无"
+     * 4. 不同聚团相邻格子之间的边：防御工事降为"无"
      */
     private fun assignUrbanFortifications(hexMap: HexMap, random: Random) {
         // 识别所有建筑群聚团
@@ -389,16 +381,7 @@ object TerrainGenerator {
             clusterFortTypes[clusterId] = fortType
         }
 
-        // 清除所有现有的防御工事
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                for (dir in 0..5) {
-                    hexMap.edges[x][y][dir].fortification = FortType.NONE
-                }
-            }
-        }
-
-        // 为每个建筑群格子设置防御工事
+        // 第一步：为所有建筑群格子设置六面全包围防御工事
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
@@ -407,39 +390,35 @@ object TerrainGenerator {
                 val currentClusterId = clusterIdMap[cellPos] ?: continue
                 val fortType = clusterFortTypes[currentClusterId] ?: continue
 
-                // 获取相邻格子坐标
-                val neighbors = hexMap.getNeighborCoords(x, y)
+                // 设置6条边为聚团的防御工事类型
+                for (dir in 0..5) {
+                    hexMap.setFortification(x, y, dir, fortType)
+                }
+            }
+        }
 
-                // 设置6条边的防御工事
+        // 第二步：同一聚团内相邻格子之间的边降为"无"
+        // 遍历每个聚团内部的格子对
+        for ((clusterId, cluster) in clusters.withIndex()) {
+            // 遍历聚团内的每个格子
+            for (cell in cluster) {
+                val (x, y) = cell
+                val neighbors = hexMap.getNeighborCoords(x, y)
+                
+                // 检查6个方向的邻居
                 for (dir in 0..5) {
                     val neighbor = neighbors.getOrNull(dir) ?: continue
-                    val (nx, ny) = neighbor
-
-                    // 检查相邻格子是否属于同一聚团
-                    val neighborClusterId = if (hexMap.isValidCell(nx, ny)) clusterIdMap[neighbor] else null
-                    val isSameCluster = neighborClusterId == currentClusterId
-
-                    if (isSameCluster) {
-                        // 同一聚团内相邻格子：没有防御工事（保持NONE）
-                        // 不调用 setFortification，让它保持 NONE
-                    } else {
-                        // 外部边界：设置为聚团的防御工事类型
-                        hexMap.setFortification(x, y, dir, fortType)
+                    
+                    // 检查邻居是否在同一聚团
+                    if (clusterIdMap[neighbor] == clusterId) {
+                        // 同一聚团内相邻格子之间的边，清除防御工事
+                        hexMap.setFortification(x, y, dir, FortType.NONE)
                     }
                 }
             }
         }
-        
-        // 后处理：确保不同聚团之间的防御工事被清除
-        // （由于上面逻辑已经正确处理，这里确保双向同步正确）
-        clearInterClusterFortifications(hexMap, clusterIdMap)
-    }
 
-    /**
-     * 清除相邻不同建筑群聚团之间的防御工事
-     * 同时确保同一聚团内部的相邻边也没有防御工事
-     */
-    private fun clearInterClusterFortifications(hexMap: HexMap, clusterIdMap: Map<Pair<Int, Int>, Int>) {
+        // 第三步：不同聚团相邻格子之间的边降为"无"
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 if (hexMap.cells[x][y].terrain != TerrainType.URBAN) continue
@@ -458,27 +437,10 @@ object TerrainGenerator {
 
                     val neighborClusterId = clusterIdMap[neighbor] ?: continue
 
-                    // 如果是不同聚团，清除防御工事
+                    // 如果是不同聚团，清除防御工事（使用setFortification同步两边）
                     if (currentClusterId != neighborClusterId) {
                         hexMap.setFortification(x, y, dir, FortType.NONE)
                     }
-                    // 同一聚团内的相邻边也清除（确保没有防御工事）
-                    // 注意：由于上面已经处理了，这里不需要再清除
-                }
-            }
-        }
-    }
-
-    /**
-     * 清除所有非建筑群格子的防御工事（备用清理）
-     */
-    private fun clearNonUrbanFortifications(hexMap: HexMap) {
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                if (hexMap.cells[x][y].terrain == TerrainType.URBAN) continue
-
-                for (dir in 0..5) {
-                    hexMap.edges[x][y][dir].fortification = FortType.NONE
                 }
             }
         }

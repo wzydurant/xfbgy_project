@@ -502,6 +502,22 @@ class ComponentDebugActivity : AppCompatActivity() {
         val riverGenerator = DebugRiverGenerator()
         riverGenerator.generate(map)
 
+        // 4. 同步河流边：确保共边两侧都有河流标记（使河流显示为双线）
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                for (dir in 0..5) {
+                    // 如果当前格子的这条边有河流，确保相邻格子对应边也有
+                    if (map.edges[x][y][dir].hasRiver) {
+                        val (nx, ny) = map.getNeighborCoord(x, y, dir)
+                        if (map.isValidCell(nx, ny)) {
+                            val oppositeDir = (dir + 3) % 6
+                            map.edges[nx][ny][oppositeDir].hasRiver = true
+                        }
+                    }
+                }
+            }
+        }
+
         // 4. 显示地图
         currentMap = map
         mapGridView.map = map

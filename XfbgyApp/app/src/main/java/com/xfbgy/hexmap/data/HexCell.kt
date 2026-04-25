@@ -1,11 +1,17 @@
 package com.xfbgy.hexmap.data
 
-import com.xfbgy.hexmap.data.FortType
-import com.xfbgy.hexmap.data.TerrainType
 import com.xfbgy.hexmap.data.Unit as GameUnit
 
 /**
  * 六角格内部属性数据类
+ * 
+ * 边的编号（顺时针）：
+ * - 0: 上 (顶部边)
+ * - 1: 右上
+ * - 2: 右下
+ * - 3: 下 (底部边)
+ * - 4: 左下
+ * - 5: 左上
  *
  * @param x 列坐标
  * @param y 行坐标
@@ -22,6 +28,67 @@ data class HexCell(
     var movementCost: Int = 0,
     var zoc: Int = 0b000
 ) {
+    /**
+     * 边缘数组（顺时针编号 0-5）
+     * 每条边属于这个格子
+     * - 0: 上边
+     * - 1: 右上边
+     * - 2: 右下边
+     * - 3: 下边
+     * - 4: 左下边
+     * - 5: 左上边
+     */
+    val edges: Array<HexEdge> = Array(6) { HexEdge() }
+
+    /**
+     * 获取指定方向的边
+     * @param direction 方向(0~5)
+     * @return HexEdge 边缘对象
+     */
+    fun getEdge(direction: Int): HexEdge? {
+        return if (direction in 0..5) edges[direction] else null
+    }
+
+    /**
+     * 设置指定方向的河流
+     * @param direction 方向(0~5)
+     * @param hasRiver 是否有河流
+     */
+    fun setRiver(direction: Int, hasRiver: Boolean) {
+        if (direction in 0..5) {
+            edges[direction].hasRiver = hasRiver
+        }
+    }
+
+    /**
+     * 获取指定方向的河流状态
+     * @param direction 方向(0~5)
+     * @return 是否有河流
+     */
+    fun hasRiver(direction: Int): Boolean {
+        return if (direction in 0..5) edges[direction].hasRiver else false
+    }
+
+    /**
+     * 设置指定方向的防御工事
+     * @param direction 方向(0~5)
+     * @param fortType 工事类型
+     */
+    fun setFortification(direction: Int, fortType: FortType) {
+        if (direction in 0..5) {
+            edges[direction].fortification = fortType
+        }
+    }
+
+    /**
+     * 获取指定方向的防御工事类型
+     * @param direction 方向(0~5)
+     * @return 工事类型
+     */
+    fun getFortification(direction: Int): FortType {
+        return if (direction in 0..5) edges[direction].fortification else FortType.NONE
+    }
+
     /**
      * 查询某格是否被某阵营控制
      * @param faction 阵营编号（1~8）
@@ -73,10 +140,18 @@ data class HexCell(
     }
 
     /**
-     * 应用地形效果到6条边
-     * @param edges 6条边的数组
+     * 重置所有边缘属性
      */
-    fun applyTerrainEffects(edges: Array<HexEdge>) {
+    fun resetEdges() {
+        for (edge in edges) {
+            edge.reset()
+        }
+    }
+
+    /**
+     * 应用地形效果到6条边
+     */
+    fun applyTerrainEffects() {
         when (terrain) {
             TerrainType.PLAIN -> {
                 movementCost = 1

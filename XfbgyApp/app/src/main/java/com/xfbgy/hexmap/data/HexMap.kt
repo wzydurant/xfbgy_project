@@ -8,6 +8,14 @@ import kotlin.math.sqrt
  * 采用偏移坐标（Offset Coordinates，odd-r）存储，
  * 内部运算时转换为轴向坐标（Axial Coordinates）
  *
+ * 边的编号（顺时针）：
+ * - 0: 上 (顶部边)
+ * - 1: 右上
+ * - 2: 右下
+ * - 3: 下 (底部边)
+ * - 4: 左下
+ * - 5: 左上
+ *
  * @property width 地图宽度（列数）
  * @property height 地图高度（行数）
  */
@@ -21,16 +29,6 @@ class HexMap(
     val cells: Array<Array<HexCell>> = Array(width) { x ->
         Array(height) { y ->
             HexCell(x, y, TerrainType.PLAIN)
-        }
-    }
-
-    /**
-     * 边缘存储 [x][y][direction(0~5)]
-     * direction: 0=上, 1=右上, 2=右下, 3=下, 4=左下, 5=左上
-     */
-    val edges: Array<Array<Array<HexEdge>>> = Array(width) { x ->
-        Array(height) { y ->
-            Array(6) { HexEdge() }
         }
     }
 
@@ -93,10 +91,16 @@ class HexMap(
     }
 
     /**
-     * 获取相邻格坐标
+     * 获取相邻格坐标（顺时针编号）
      * @param x 当前格列坐标
      * @param y 当前格行坐标
      * @return 相邻6格的坐标列表（方向0~5）
+     *   0: 上邻格
+     *   1: 右上邻格
+     *   2: 右下邻格
+     *   3: 下邻格
+     *   4: 左下邻格
+     *   5: 左上邻格
      */
     fun getNeighborCoords(x: Int, y: Int): List<Pair<Int, Int>> {
         // odd-r 布局的标准偏移（根据奇偶行有所不同）
@@ -124,15 +128,25 @@ class HexMap(
     }
 
     /**
-     * 获取所有相邻格
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 有效的相邻格列表
+     * 获取两个相邻格之间的方向
+     * 从 cell1 看向 cell2，返回 cell1 的哪个方向能到达 cell2
+     * @param x1 格1列坐标
+     * @param y1 格1行坐标
+     * @param x2 格2列坐标
+     * @param y2 格2行坐标
+     * @return cell1 的方向编号(0~5)，如果不相邻则返回 null
      */
-    fun getNeighbors(x: Int, y: Int): List<HexCell> {
-        return getNeighborCoords(x, y)
-            .filter { (nx, ny) -> isValidCell(nx, ny) }
-            .map { (nx, ny) -> cells[nx][ny] }
+    fun getDirection(x1: Int, y1: Int, x2: Int, y2: Int): Int? {
+        val neighbors = getNeighborCoords(x1, y1)
+        for (dir in 0..5) {
+            if (dir in neighbors.indices) {
+                val (nx, ny) = neighbors[dir]
+                if (nx == x2 && ny == y2) {
+                    return dir
+                }
+            }
+        }
+        return null
     }
 
     /**
@@ -144,116 +158,59 @@ class HexMap(
      */
     fun getEdge(x: Int, y: Int, direction: Int): HexEdge? {
         if (!isValidCell(x, y) || direction !in 0..5) return null
-        return edges[x][y][direction]
+        return cells[x][y].edges[direction]
     }
 
     /**
-     * 获取两个相邻格共享的边
-     * @param x1 格1列坐标
-     * @param y1 格1行坐标
-     * @param x2 格2列坐标
-     * @param y2 格2行坐标
-     * @return 共享边的方向（从格1看向格2），及边对象
-     */
-    fun getSharedEdge(x1: Int, y1: Int, x2: Int, y2: Int): Pair<Int, HexEdge>? {
-        // 计算从(x1,y1)到(x2,y2)的方向
-        val dx = x2 - x1
-        val dy = y2 - y1
-
-        // odd-r布局的方向判断
-        val direction = when {
-            dy == -1 && dx == 0 -> 0   // 上
-            dy == -1 && dx == 1 -> 1   // 右上
-            dy == 0 && dx == 1 -> 2    // 右下
-            dy == 1 && dx == 0 -> 3    // 下
-            dy == 0 && dx == -1 -> 4   // 左下
-            dy == -1 && dx == -1 -> 5  // 左上
-            else -> return null
-        }
-
-        val edge = getEdge(x1, y1, direction) ?: return null
-        return Pair(direction, edge)
-    }
-
-    /**
-     * 设置河流并同步共享边（别名：setEdgeRiver）
+     * 设置河流（同时设置两个相邻格子的对应边）
      * @param x 列坐标
      * @param y 行坐标
      * @param direction 方向(0~5)
      * @param hasRiver 是否有河流
      */
     fun setRiver(x: Int, y: Int, direction: Int, hasRiver: Boolean) {
-        val edge = getEdge(x, y, direction) ?: return
-        edge.hasRiver = hasRiver
+        if (!isValidCell(x, y) || direction !in 0..5) return
+        cells[x][y].setRiver(direction, hasRiver)
 
-        // 同步相邻格的共享边
+        // 同步相邻格的反向边
         val neighbors = getNeighborCoords(x, y)
-        if (direction in 0..5) {
-            val (nx, ny) = neighbors[direction]
-            if (isValidCell(nx, ny)) {
-                // 对面方向 = (direction + 3) % 6
-                val oppositeDir = (direction + 3) % 6
-                edges[nx][ny][oppositeDir].hasRiver = hasRiver
-            }
+        val (nx, ny) = neighbors[direction]
+        if (isValidCell(nx, ny)) {
+            val oppositeDir = (direction + 3) % 6
+            cells[nx][ny].setRiver(oppositeDir, hasRiver)
         }
     }
 
     /**
-     * 设置河流并同步共享边
-     * @param x 列坐标
-     * @param y 行坐标
-     * @param direction 方向(0~5)
-     * @param hasRiver 是否有河流
-     */
-    fun setEdgeRiver(x: Int, y: Int, direction: Int, hasRiver: Boolean) {
-        val edge = getEdge(x, y, direction) ?: return
-        edge.hasRiver = hasRiver
-
-        // 同步相邻格的共享边
-        val neighbors = getNeighborCoords(x, y)
-        if (direction in 0..5) {
-            val (nx, ny) = neighbors[direction]
-            if (isValidCell(nx, ny)) {
-                // 对面方向 = (direction + 3) % 6
-                val oppositeDir = (direction + 3) % 6
-                edges[nx][ny][oppositeDir].hasRiver = hasRiver
-            }
-        }
-    }
-
-    /**
-     * 设置防御工事（会同步到共享边）
+     * 设置防御工事（同时设置两个相邻格子的对应边）
      * @param x 列坐标
      * @param y 行坐标
      * @param direction 方向(0~5)
      * @param fortType 工事类型
      */
     fun setFortification(x: Int, y: Int, direction: Int, fortType: FortType) {
-        val edge = getEdge(x, y, direction) ?: return
-        edge.fortification = fortType
+        if (!isValidCell(x, y) || direction !in 0..5) return
+        cells[x][y].setFortification(direction, fortType)
 
-        // 同步相邻格的共享边
+        // 同步相邻格的反向边
         val neighbors = getNeighborCoords(x, y)
-        if (direction in 0..5) {
-            val (nx, ny) = neighbors[direction]
-            if (isValidCell(nx, ny)) {
-                val oppositeDir = (direction + 3) % 6
-                edges[nx][ny][oppositeDir].fortification = fortType
-            }
+        val (nx, ny) = neighbors[direction]
+        if (isValidCell(nx, ny)) {
+            val oppositeDir = (direction + 3) % 6
+            cells[nx][ny].setFortification(oppositeDir, fortType)
         }
     }
 
     /**
      * 设置防御工事（仅设置当前格子，不同步到共享边）
-     * 用于建筑群防御工事独立设置的情况
      * @param x 列坐标
      * @param y 行坐标
      * @param direction 方向(0~5)
      * @param fortType 工事类型
      */
     fun setFortificationLocal(x: Int, y: Int, direction: Int, fortType: FortType) {
-        val edge = getEdge(x, y, direction) ?: return
-        edge.fortification = fortType
+        if (!isValidCell(x, y) || direction !in 0..5) return
+        cells[x][y].setFortification(direction, fortType)
     }
 
     /**
@@ -303,13 +260,54 @@ class HexMap(
      * 清除所有边属性（重置河流和工事）
      */
     fun clearAllEdges() {
-        edges.forEach { col ->
-            col.forEach { cellEdges ->
-                cellEdges.forEach { edge ->
-                    edge.reset()
-                }
+        cells.forEach { col ->
+            col.forEach { cell ->
+                cell.resetEdges()
             }
         }
+    }
+
+    /**
+     * 判断格子是否在地图边缘
+     * @param x 列坐标
+     * @param y 行坐标
+     * @return 如果在边缘返回边缘边的方向列表，否则返回空列表
+     */
+    fun getEdgeDirections(x: Int, y: Int): List<Int> {
+        val edgeDirs = mutableListOf<Int>()
+        if (y == 0) edgeDirs.add(0)           // 上边在地图外
+        if (x == width - 1) edgeDirs.add(2)   // 右边在地图外（奇偶行统一）
+        if (y == height - 1) edgeDirs.add(3)  // 下边在地图外
+        if (x == 0) edgeDirs.add(5)            // 左边在地图外（奇偶行统一）
+        
+        // 处理奇偶行导致的边缘边差异
+        if (y % 2 == 1) {
+            // 奇数行：右边更靠右
+            if (x == width - 1) {
+                // 右下边也在边缘
+                if (!edgeDirs.contains(2)) edgeDirs.add(2)
+            }
+        } else {
+            // 偶数行：左边更靠左
+            if (x == 0) {
+                // 左上边也在边缘
+                if (!edgeDirs.contains(5)) edgeDirs.add(5)
+            }
+        }
+        
+        return edgeDirs.distinct()
+    }
+
+    /**
+     * 判断某条边是否在地图边缘
+     * @param x 列坐标
+     * @param y 行坐标
+     * @param direction 方向(0~5)
+     * @return 是否在地图边缘
+     */
+    fun isEdgeOnMapBorder(x: Int, y: Int, direction: Int): Boolean {
+        val borderDirs = getEdgeDirections(x, y)
+        return direction in borderDirs
     }
 
     /**
@@ -327,7 +325,7 @@ class HexMap(
         for (y in 0 until height) {
             for (x in 0 until width) {
                 for (d in 0..5) {
-                    val edge = edges[x][y][d]
+                    val edge = cells[x][y].edges[d]
                     if (edge.hasRiver || edge.fortification != FortType.NONE) {
                         sb.appendLine("Edge:$x,$y,$d,${edge.hasRiver},${edge.fortification.name}")
                     }
@@ -339,14 +337,14 @@ class HexMap(
 
     companion object {
         /**
-         * 方向常量
+         * 方向常量（顺时针编号）
          */
-        const val DIR_UP = 0
-        const val DIR_UPPER_RIGHT = 1
-        const val DIR_LOWER_RIGHT = 2
-        const val DIR_DOWN = 3
-        const val DIR_LOWER_LEFT = 4
-        const val DIR_UPPER_LEFT = 5
+        const val DIR_UP = 0           // 上
+        const val DIR_UPPER_RIGHT = 1  // 右上
+        const val DIR_LOWER_RIGHT = 2  // 右下
+        const val DIR_DOWN = 3         // 下
+        const val DIR_LOWER_LEFT = 4   // 左下
+        const val DIR_UPPER_LEFT = 5   // 左上
 
         /**
          * 方向名称映射
@@ -357,5 +355,15 @@ class HexMap(
          * 反向方向
          */
         fun oppositeDirection(dir: Int): Int = (dir + 3) % 6
+
+        /**
+         * 顺时针下一个方向
+         */
+        fun clockwiseDirection(dir: Int): Int = (dir + 1) % 6
+
+        /**
+         * 逆时针下一个方向
+         */
+        fun counterClockwiseDirection(dir: Int): Int = (dir + 5) % 6
     }
 }

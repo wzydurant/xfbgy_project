@@ -23,8 +23,7 @@ object AttributeCalculator {
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 val cell = hexMap.getCell(x, y) ?: continue
-                val edges = hexMap.edges[x][y]
-                cell.applyTerrainEffects(edges)
+                cell.applyTerrainEffects()
             }
         }
 
@@ -51,15 +50,13 @@ object AttributeCalculator {
 
     /**
      * 计算所有效果（在边属性已设置后调用，只叠加不清除）
-     * @param hexMap 地图对象
      */
     fun calculateEffects(hexMap: HexMap) {
         // Step 1 & Step 2: 地形效果（基础效果）
         for (y in 0 until hexMap.height) {
             for (x in 0 until hexMap.width) {
                 val cell = hexMap.getCell(x, y) ?: continue
-                val edges = hexMap.edges[x][y]
-                cell.applyTerrainEffects(edges)
+                cell.applyTerrainEffects()
             }
         }
 
@@ -86,19 +83,14 @@ object AttributeCalculator {
 
     /**
      * 对单个格子应用地形效果
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
      */
     fun applyTerrainEffect(hexMap: HexMap, x: Int, y: Int) {
         val cell = hexMap.getCell(x, y) ?: return
-        val edges = hexMap.edges[x][y]
-        cell.applyTerrainEffects(edges)
+        cell.applyTerrainEffects()
     }
 
     /**
      * 对单条边应用河流效果
-     * @param edge 边对象
      */
     fun applyRiverEffect(edge: HexEdge) {
         edge.applyRiverEffect()
@@ -106,7 +98,6 @@ object AttributeCalculator {
 
     /**
      * 对单条边应用防御工事效果
-     * @param edge 边对象
      */
     fun applyFortEffect(edge: HexEdge) {
         edge.applyFortBonus()
@@ -114,77 +105,54 @@ object AttributeCalculator {
 
     /**
      * 计算格子总防御力（含地形和所有边）
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 总防御优势值
      */
     fun calculateTotalDefenseBonus(hexMap: HexMap, x: Int, y: Int): Int {
         val cell = hexMap.getCell(x, y) ?: return 0
         var total = 0
         for (dir in 0..5) {
-            val edge = hexMap.getEdge(x, y, dir) ?: continue
-            total += edge.defenseBonus
+            total += cell.edges[dir].defenseBonus
         }
         return total
     }
 
     /**
-     * 计算格子总进攻力加成（仅来自地形）
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 总进攻优势值
+     * 计算格子总进攻力加成
      */
     fun calculateTotalAttackBonus(hexMap: HexMap, x: Int, y: Int): Int {
         val cell = hexMap.getCell(x, y) ?: return 0
         var total = 0
         for (dir in 0..5) {
-            val edge = hexMap.getEdge(x, y, dir) ?: continue
-            total += edge.attackBonus
+            total += cell.edges[dir].attackBonus
         }
         return total
     }
 
     /**
      * 获取格子所有条件防御优势
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 条件防御优势列表（去重）
      */
     fun getAllDefenseConditions(hexMap: HexMap, x: Int, y: Int): List<String> {
         val conditions = mutableSetOf<String>()
+        val cell = hexMap.getCell(x, y) ?: return emptyList()
         for (dir in 0..5) {
-            val edge = hexMap.getEdge(x, y, dir) ?: continue
-            conditions.addAll(edge.defenseConditions)
+            conditions.addAll(cell.edges[dir].defenseConditions)
         }
         return conditions.toList()
     }
 
     /**
      * 获取格子所有条件进攻优势
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 条件进攻优势列表（去重）
      */
     fun getAllAttackConditions(hexMap: HexMap, x: Int, y: Int): List<String> {
         val conditions = mutableSetOf<String>()
+        val cell = hexMap.getCell(x, y) ?: return emptyList()
         for (dir in 0..5) {
-            val edge = hexMap.getEdge(x, y, dir) ?: continue
-            conditions.addAll(edge.attackConditions)
+            conditions.addAll(cell.edges[dir].attackConditions)
         }
         return conditions.toList()
     }
 
     /**
      * 获取边的完整信息描述
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @param direction 方向(0~5)
-     * @return 边的属性描述字符串
      */
     fun getEdgeDescription(hexMap: HexMap, x: Int, y: Int, direction: Int): String {
         val edge = hexMap.getEdge(x, y, direction) ?: return "无效边"
@@ -208,10 +176,6 @@ object AttributeCalculator {
 
     /**
      * 获取格子完整信息描述
-     * @param hexMap 地图对象
-     * @param x 列坐标
-     * @param y 行坐标
-     * @return 格子的完整属性描述字符串
      */
     fun getCellDescription(hexMap: HexMap, x: Int, y: Int): String {
         val cell = hexMap.getCell(x, y) ?: return "无效格子"
