@@ -10,7 +10,6 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -56,6 +55,8 @@ class ComponentDebugActivity : AppCompatActivity() {
     private lateinit var riverCountInput: EditText
     private lateinit var mapGridView: HexMapGridView
     private lateinit var mapInfoText: TextView
+    private lateinit var cellInfoText: TextView
+    private lateinit var zoomText: TextView
     private var currentMap: DebugHexMap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -317,7 +318,7 @@ class ComponentDebugActivity : AppCompatActivity() {
         inputLayout.addView(inputLabel)
 
         mapSizeInput = EditText(this).apply {
-            hint = "3~15"
+            hint = "5~50"
             textSize = 15f
             inputType = InputType.TYPE_CLASS_NUMBER
             setTextColor(Color.WHITE)
@@ -402,42 +403,111 @@ class ComponentDebugActivity : AppCompatActivity() {
         }
         rootLayout.addView(mapInfoText)
 
-        // 地图容器（可横向+纵向滚动）
-        val mapScrollContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        // 缩放控制栏
+        val zoomBarLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            setBackgroundColor(0xFF0D1117.toInt())
+            setPadding(0, dpToPx(4), 0, dpToPx(4))
         }
 
-        val hScrollView = HorizontalScrollView(this).apply {
+        val zoomHint = TextView(this).apply {
+            text = "缩放："
+            textSize = 14f
+            setTextColor(0xFFB0FFFFFF.toInt())
+        }
+        zoomBarLayout.addView(zoomHint)
+
+        val zoomOutBtn = Button(this).apply {
+            text = "−"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF37474F.toInt())
+            layoutParams = LinearLayout.LayoutParams(dpToPx(44), dpToPx(36))
+            setOnClickListener {
+                mapGridView.zoomOut()
+                updateZoomText()
+            }
+        }
+        zoomBarLayout.addView(zoomOutBtn)
+
+        zoomText = TextView(this).apply {
+            text = "100%"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dpToPx(64), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        zoomBarLayout.addView(zoomText)
+
+        val zoomInBtn = Button(this).apply {
+            text = "+"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF37474F.toInt())
+            layoutParams = LinearLayout.LayoutParams(dpToPx(44), dpToPx(36))
+            setOnClickListener {
+                mapGridView.zoomIn()
+                updateZoomText()
+            }
+        }
+        zoomBarLayout.addView(zoomInBtn)
+
+        val resetViewBtn = Button(this).apply {
+            text = "重置视图"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF37474F.toInt())
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            isFillViewport = true
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dpToPx(36)
+            ).apply {
+                marginStart = dpToPx(8)
+            }
+            setOnClickListener {
+                mapGridView.resetView()
+                mapGridView.centerMap()
+                updateZoomText()
+            }
         }
+        zoomBarLayout.addView(resetViewBtn)
 
-        val mapVScrollView = ScrollView(this).apply {
+        val tapHint = TextView(this).apply {
+            text = "  双指缩放·拖拽平移·点击选中"
+            textSize = 12f
+            setTextColor(0xFF80FFFFFF.toInt())
+        }
+        zoomBarLayout.addView(tapHint)
+
+        rootLayout.addView(zoomBarLayout)
+
+        // 地图容器（自带缩放和平移）
+        mapGridView = HexMapGridView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 dpToPx(500)
             )
+            setBackgroundColor(0xFF0D1117.toInt())
+            onCellSelected = { x, y -> updateCellInfo(x, y) }
         }
+        rootLayout.addView(mapGridView)
 
-        mapGridView = HexMapGridView(this).apply {
+        // 选中格子信息文本
+        cellInfoText = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFFE0E0E0.toInt())
+            setBackgroundColor(0xFF1A1A2E.toInt())
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
+            text = "点击地图格子查看详细信息"
         }
-
-        mapVScrollView.addView(mapGridView)
-        hScrollView.addView(mapVScrollView)
-        mapScrollContainer.addView(hScrollView)
-        rootLayout.addView(mapScrollContainer)
+        rootLayout.addView(cellInfoText)
 
         // 底部间距
         val spacer = View(this).apply {
@@ -463,6 +533,43 @@ class ComponentDebugActivity : AppCompatActivity() {
         val dirNames = arrayOf("上(顶)", "右上", "右下", "下(底)", "左下", "左上")
         val detailText = "边${currentEdgeNum} = ${dirNames[edgeIdx]}方向"
         edgeInfoText.append("\n$detailText")
+    }
+
+    /**
+     * 更新选中格子信息文本
+     */
+    private fun updateCellInfo(x: Int, y: Int) {
+        val m = currentMap
+        if (m == null || x < 0 || y < 0) {
+            cellInfoText.text = "点击地图格子查看详细信息"
+            return
+        }
+
+        val cell = m.cells[x][y]
+        val sb = StringBuilder()
+        sb.append("坐标: ($x, $y)  |  地形: ${cell.terrain.chineseName}")
+        sb.append("\n")
+
+        val dirNames = arrayOf("1-顶边", "2-右上", "3-右下", "4-底边", "5-左下", "6-左上")
+        val edgeDescs = mutableListOf<String>()
+        for (dir in 0 until 6) {
+            val edge = m.edges[x][y][dir]
+            val parts = mutableListOf<String>()
+            if (edge.hasRiver) parts.add("河流")
+            if (edge.fortification != FortType.NONE) parts.add("工事:${edge.fortification.chineseName}")
+            val status = if (parts.isEmpty()) "—" else parts.joinToString(", ")
+            edgeDescs.add("${dirNames[dir]}: $status")
+        }
+
+        sb.append(edgeDescs.joinToString("  "))
+        cellInfoText.text = sb.toString()
+    }
+
+    /**
+     * 更新缩放百分比显示
+     */
+    private fun updateZoomText() {
+        zoomText.text = "${mapGridView.getZoomPercent()}%"
     }
 
     private fun createSectionTitle(text: String): TextView {
@@ -508,8 +615,8 @@ class ComponentDebugActivity : AppCompatActivity() {
         val sizeStr = mapSizeInput.text.toString()
         val size = sizeStr.toIntOrNull()
 
-        if (size == null || size !in 3..15) {
-            Toast.makeText(this, "请输入3~15之间的数字", Toast.LENGTH_SHORT).show()
+        if (size == null || size !in 5..50) {
+            Toast.makeText(this, "请输入5~50之间的数字", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -553,14 +660,23 @@ class ComponentDebugActivity : AppCompatActivity() {
         currentMap = map
         mapGridView.map = map
 
-        // 根据地图大小调整hex半径
+        // 根据地图大小调整hex半径（flat-top: 列间距=1.5R）
         val maxMapWidthPx = resources.displayMetrics.widthPixels - dpToPx(32)
-        val desiredRadius = maxMapWidthPx / (size * sqrt(3f) + sqrt(3f) / 2)
+        val desiredRadius = maxMapWidthPx / ((size - 1) * 1.5f + 2f)
         val clampedRadius = desiredRadius.coerceIn(
-            15f * resources.displayMetrics.density,
+            8f * resources.displayMetrics.density,
             50f * resources.displayMetrics.density
         )
         mapGridView.hexRadius = clampedRadius
+
+        // 居中地图
+        mapGridView.post {
+            mapGridView.centerMap()
+            updateZoomText()
+        }
+
+        // 清空选中信息
+        cellInfoText.text = "点击地图格子查看详细信息"
 
         // 统计信息
         var riverEdgeCount = 0

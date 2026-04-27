@@ -8,7 +8,8 @@ import kotlin.math.sqrt
  * 与 HexMap 功能类似，但无 20~40 的大小限制，
  * 适用于组件调试页面的地图生成功能。
  *
- * 采用 odd-r 偏移坐标，邻居偏移经过精确计算。
+ * 采用 odd-q 偏移坐标（flat-top六边形），邻居偏移经过精确计算。
+ * x=列，y=行；奇数列向下偏移半格。
  *
  * @property width 地图宽度（列数）
  * @property height 地图高度（行数）
@@ -29,24 +30,24 @@ class DebugHexMap(
         }
     }
 
-    // 偶数行邻居偏移表
-    private val evenRowOffsets = arrayOf(
+    // 偶数列邻居偏移表（flat-top, odd-q）
+    private val evenColOffsets = arrayOf(
         intArrayOf(0, -1),   // 0: 顶边
-        intArrayOf(1, 0),    // 1: 右上
-        intArrayOf(0, 1),    // 2: 右下
-        intArrayOf(-1, 1),   // 3: 底边
+        intArrayOf(1, -1),   // 1: 右上
+        intArrayOf(1, 0),    // 2: 右下
+        intArrayOf(0, 1),    // 3: 底边
         intArrayOf(-1, 0),   // 4: 左下
         intArrayOf(-1, -1)   // 5: 左上
     )
 
-    // 奇数行邻居偏移表
-    private val oddRowOffsets = arrayOf(
-        intArrayOf(1, -1),   // 0: 顶边
+    // 奇数列邻居偏移表（flat-top, odd-q）
+    private val oddColOffsets = arrayOf(
+        intArrayOf(0, -1),   // 0: 顶边
         intArrayOf(1, 0),    // 1: 右上
         intArrayOf(1, 1),    // 2: 右下
         intArrayOf(0, 1),    // 3: 底边
-        intArrayOf(-1, 0),   // 4: 左下
-        intArrayOf(0, -1)    // 5: 左上
+        intArrayOf(-1, 1),   // 4: 左下
+        intArrayOf(-1, 0)    // 5: 左上
     )
 
     /**
@@ -57,7 +58,7 @@ class DebugHexMap(
      * @return Pair(nx, ny) 邻居坐标
      */
     fun getNeighborCoord(x: Int, y: Int, direction: Int): Pair<Int, Int> {
-        val offsets = if (y % 2 == 0) evenRowOffsets else oddRowOffsets
+        val offsets = if (x % 2 == 0) evenColOffsets else oddColOffsets
         val d = direction % 6
         return Pair(x + offsets[d][0], y + offsets[d][1])
     }
@@ -115,12 +116,16 @@ class DebugHexMap(
     }
 
     /**
-     * 六角格中心点像素坐标（odd-r布局）
+     * 六角格中心点像素坐标（flat-top, odd-q布局）
+     *
+     * flat-top六边形：宽=2R，高=√3·R
+     * 列间距=1.5R，行间距=√3·R
+     * 奇数列向下偏移√3·R/2
      */
     fun hexToPixel(x: Int, y: Int, R: Float): Pair<Float, Float> {
-        val colOffset = if (y % 2 == 1) R * sqrt(3f) / 2 else 0f
-        val px = x * R * sqrt(3f) + colOffset
-        val py = y * R * 1.5f
+        val rowOffset = if (x % 2 == 1) R * sqrt(3f) / 2 else 0f
+        val px = x * R * 1.5f
+        val py = y * R * sqrt(3f) + rowOffset
         return Pair(px, py)
     }
 

@@ -115,7 +115,8 @@ class HexCellDebugView @JvmOverloads constructor(
 
     private fun recalculateVertices() {
         for (i in 0 until 6) {
-            val angle = Math.PI / 3 * i - Math.PI / 2  // 从顶部开始顺时针
+            // flat-top：顶点从-120°开始顺时针，1号边(顶边)为水平线
+            val angle = Math.PI / 3.0 * i - Math.PI / 2.0 - Math.PI / 6.0
             vertices[i] = PointF(
                 (hexRadius * cos(angle)).toFloat(),
                 (hexRadius * sin(angle)).toFloat()
