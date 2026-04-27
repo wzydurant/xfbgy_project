@@ -609,6 +609,297 @@ class ComponentDebugActivity : AppCompatActivity() {
     }
 
     /**
+     * 生成建筑群位置（聚团 + 离散格子混合）
+     *
+     * 规则：
+     * - 聚团数量与建筑群格比例为1:5（聚团算1个格子）
+     * - 聚团数量限制在2-6个
+     * - 每个聚团1个格子（确保聚团数:离散格子数 ≈ 1:5）
+     * - 聚团间距离≥2/3边长
+     * - 剩余格子作为离散格子分布
+     *
+     * @param size 地图大小
+     * @param urbanCount 建筑群数量
+     * @param random 随机数生成器
+     * @return 建筑群格子坐标集合
+     */
+    private fun generateUrbanCells(size: Int, urbanCount: Int, random: Random): Set<Pair<Int, Int>> {
+        val minClusterDist = maxOf(3, size / 2)  // 聚团中心间最小距离（≥1/2边长，至少3格）
+
+        // ========== 修复：确保至少有2个聚团 ==========
+        // 每个聚团至少需要1个格子，如果 urbanCount 不足以生成2个聚团，强制增加
+        val effectiveUrbanCount = maxOf(urbanCount, 4)  // 至少4个格子，确保能生成2个聚团
+
+        // 计算聚团数量：至少2个
+        val clusterCount = maxOf(2, (effectiveUrbanCount / 5.0).toInt().coerceAtMost(6))
+
+        // 所有格子列表
+        val allCells = mutableListOf<Pair<Int, Int>>()
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                allCells.add(Pair(x, y))
+            }
+        }
+
+        // 确保至少有2个格子
+        if (allCells.size < 2) {
+            return emptySet()
+        }
+
+        // ========== 1. 生成聚团中心 ==========
+        // 策略：确保至少2个聚团中心，且它们之间距离足够远（不会被BFS合并）
+        val clusterCenters = mutableListOf<Pair<Int, Int>>()
+        
+        // 随机打乱格子顺序
+        allCells.shuffle(random)
+        
+        // 第一个聚团中心：随机选择
+        clusterCenters.add(allCells[0])
+        
+        // 第二个聚团中心：选择与第一个距离最大的，且距离必须 >= 2（避免BFS合并）
+        var maxDist = 0
+        var secondCenter = allCells[0]
+        for (cell in allCells) {
+            if (cell == clusterCenters[0]) continue
+            val dist = hexDistance(cell, clusterCenters[0])
+            // 优先选择距离 >= 2 的格子（避免BFS合并），其次选择距离最大的
+            if (dist >= 2 && dist > maxDist) {
+                maxDist = dist
+                secondCenter = cell
+            } else if (maxDist < 2 && dist > maxDist) {
+                // 如果还没找到距离 >= 2 的，选择距离最大的
+                maxDist = dist
+                secondCenter = cell
+            }
+        }
+        
+        // 确保第二个中心与第一个距离至少为 2（不会被BFS合并为同一聚团）
+        if (hexDistance(secondCenter, clusterCenters[0]) < 2) {
+            // 如果找不到距离 >= 2 的，强制找一个距离最大的
+            for (cell in allCells) {
+                if (cell == clusterCenters[0]) continue
+                val dist = hexDistance(cell, clusterCenters[0])
+                if (dist > maxDist) {
+                    maxDist = dist
+                    secondCenter = cell
+                }
+            }
+        }
+        
+        clusterCenters.add(secondCenter)
+
+        android.util.Log.d("MapGen", "聚团中心: $clusterCenters, 数量: ${clusterCenters.size}")
+        
+        // 如果还需要更多聚团中心（clusterCount > 2），尝试添加
+        if (clusterCount > 2) {
+            while (clusterCenters.size < clusterCount) {
+                var bestCell: Pair<Int, Int>? = null
+                var bestMinDist = 0
+
+                for (cell in allCells) {
+                    if (cell in clusterCenters) continue
+
+                    val minDist = clusterCenters.minOf { hexDistance(it, cell) }
+                    // 确保与所有现有中心的距离都 >= 2（不会被BFS合并）
+                    if (minDist >= 2 && minDist > bestMinDist) {
+                        bestMinDist = minDist
+                        bestCell = cell
+                    }
+                }
+
+                if (bestCell != null) {
+                    clusterCenters.add(bestCell)
+                } else {
+                    break  // 无法添加更多时退出
+                }
+            }
+        }
+
+        // ========== 2. 在聚团中心生成建筑群 ==========
+        val selectedUrbans = mutableSetOf<Pair<Int, Int>>()
+        for (center in clusterCenters) {
+            selectedUrbans.add(center)
+        }
+
+        // ========== 3. 生成离散建筑群格子 ==========
+        val remainingCount = effectiveUrbanCount - selectedUrbans.size
+        
+        if (remainingCount > 0) {
+            // 收集可用的离散格子（排除已有建筑群和聚团中心附近）
+            val occupied = selectedUrbans.toMutableSet()
+            val candidates = allCells.filter { cell ->
+                !occupied.contains(cell) && 
+                clusterCenters.none { hexDistance(cell, it) < 2.5 }
+            }.toMutableList()  // 转换为 MutableList
+            
+            // 随机选择离散格子
+            candidates.shuffle(random)
+            for (i in 0 until minOf(remainingCount, candidates.size)) {
+                selectedUrbans.add(candidates[i])
+            }
+        }
+
+        return selectedUrbans
+    }
+
+    /**
+     * 计算两个六角格坐标之间的六边形网格距离（步数）
+     * 使用 odd-q 坐标系统的立方坐标转换
+     */
+    private fun hexDistance(p1: Pair<Int, Int>, p2: Pair<Int, Int>): Int {
+        // odd-q 转立方坐标
+        val x1 = p1.first
+        val z1 = p1.second - (p1.first - (p1.first and 1)) / 2
+        val y1 = -x1 - z1
+
+        val x2 = p2.first
+        val z2 = p2.second - (p2.first - (p2.first and 1)) / 2
+        val y2 = -x2 - z2
+
+        // 立方坐标距离 = max(|dx|, |dy|, |dz|)
+        return maxOf(
+            kotlin.math.abs(x1 - x2),
+            kotlin.math.abs(y1 - y2),
+            kotlin.math.abs(z1 - z2)
+        )
+    }
+
+    /**
+     * 获取六角格邻居坐标（odd-q 偏移坐标）
+     */
+    private fun getNeighborCoords(x: Int, y: Int, size: Int): List<Pair<Int, Int>> {
+        val offsets = if (x % 2 == 0) {
+            // 偶数列邻居偏移
+            arrayOf(Pair(0, -1), Pair(1, -1), Pair(1, 0), Pair(0, 1), Pair(-1, 0), Pair(-1, -1))
+        } else {
+            // 奇数列邻居偏移
+            arrayOf(Pair(0, -1), Pair(1, 0), Pair(1, 1), Pair(0, 1), Pair(-1, 1), Pair(-1, 0))
+        }
+
+        return offsets.map { (dx, dy) -> Pair(x + dx, y + dy) }
+            .filter { (nx, ny) -> nx in 0 until size && ny in 0 until size }
+    }
+
+    /**
+     * 为建筑群设置防御工事
+     *
+     * 规则：
+     * 1. 只有建筑群格子有防御工事，其他地形6条边均无防御工事
+     * 2. 离散建筑群（不与其他建筑群格子相邻）：6条边防御工事统一为"栅栏"或"土墙"，比例2:1
+     * 3. 聚团建筑群：6条边防御工事统一为"石墙"
+     * 4. 聚团内相邻格子之间的边：防御工事改为"无"
+     */
+    private fun assignUrbanFortifications(
+        map: DebugHexMap,
+        urbanCells: Set<Pair<Int, Int>>,
+        random: Random
+    ) {
+        // 第一步：重置所有格子的防御工事为NONE
+        for (x in 0 until map.width) {
+            for (y in 0 until map.height) {
+                for (dir in 0..5) {
+                    map.setFortification(x, y, dir, FortType.NONE)
+                }
+            }
+        }
+
+        // 第二步：识别所有建筑群聚团（通过BFS）
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        val clusters = mutableListOf<List<Pair<Int, Int>>>()
+
+        android.util.Log.d("MapGen", "开始BFS识别聚团，urbanCells: $urbanCells")
+
+        for (cell in urbanCells) {
+            if (cell in visited) continue
+
+            val cluster = mutableListOf<Pair<Int, Int>>()
+            val queue = ArrayDeque<Pair<Int, Int>>()
+            queue.add(cell)
+
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                if (current in visited) continue
+
+                visited.add(current)
+                cluster.add(current)
+
+                // 查找相邻的建筑群格子
+                for ((nx, ny) in map.getAllNeighborCoords(current.first, current.second)) {
+                    val neighbor = Pair(nx, ny)
+                    if (neighbor in urbanCells && neighbor !in visited) {
+                        queue.add(neighbor)
+                    }
+                }
+            }
+
+            if (cluster.isNotEmpty()) {
+                clusters.add(cluster)
+                android.util.Log.d("MapGen", "发现聚团: $cluster")
+            }
+        }
+
+        android.util.Log.d("MapGen", "BFS识别完成，共 ${clusters.size} 个聚团")
+
+        // 构建聚团ID映射：格子坐标 -> 聚团索引
+        val clusterIdMap = mutableMapOf<Pair<Int, Int>, Int>()
+        clusters.forEachIndexed { index, cluster ->
+            cluster.forEach { pos -> clusterIdMap[pos] = index }
+        }
+
+        // 第三步：收集离散格子（1格聚团）
+        val discreteCells = mutableListOf<Pair<Int, Int>>()
+        for (cluster in clusters) {
+            if (cluster.size == 1) {
+                discreteCells.add(cluster[0])
+            }
+        }
+
+        // 第四步：为离散建筑群设置栅栏/土墙（2:1比例，栅栏2份，土墙1份）
+        // 使用 round() 四舍五入确保比例准确
+        val totalDiscrete = discreteCells.size
+        val fenceCount = kotlin.math.round(totalDiscrete * 2.0 / 3.0).toInt()
+        val shuffledDiscretes = discreteCells.shuffled(random)
+
+        shuffledDiscretes.forEachIndexed { index, (x, y) ->
+            val fortType = if (index < fenceCount) FortType.FENCE else FortType.EARTHWALL
+            for (dir in 0..5) {
+                map.setFortification(x, y, dir, fortType)
+            }
+        }
+
+        // 第五步：为聚团建筑群设置石墙
+        for (cluster in clusters) {
+            if (cluster.size > 1) {
+                for (cell in cluster) {
+                    val (x, y) = cell
+                    for (dir in 0..5) {
+                        map.setFortification(x, y, dir, FortType.STONEWALL)
+                    }
+                }
+            }
+        }
+
+        // 第六步：擦除聚团内相邻格子之间的防御工事
+        for (cluster in clusters) {
+            if (cluster.size > 1) {
+                for (cell in cluster) {
+                    val (x, y) = cell
+                    for (dir in 0..5) {
+                        val (nx, ny) = map.getNeighborCoord(x, y, dir)
+                        if (nx !in 0 until map.width || ny !in 0 until map.height) continue
+
+                        val neighborPos = Pair(nx, ny)
+                        // 如果邻居在同一个聚团内，清除防御工事
+                        if (clusterIdMap[neighborPos] == clusterIdMap[Pair(x, y)]) {
+                            map.setFortification(x, y, dir, FortType.NONE)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * 生成随机地图
      */
     private fun generateMap() {
@@ -620,32 +911,119 @@ class ComponentDebugActivity : AppCompatActivity() {
             return
         }
 
+        val totalCells = size * size
         val random = Random.Default
         val map = DebugHexMap(size, size)
 
-        // 1. 随机地形颜色
-        val terrainTypes = TerrainType.entries
+        // 地形计数
+        val terrainCounts = mutableMapOf<TerrainType, Int>()
+        TerrainType.entries.forEach { terrainCounts[it] = 0 }
+
+        // 目标比例：森林12%, 山地20%, 高山8%, 建筑群8%, 平原52%
+        // 高山必须与山地相连才能存在
+        val targetForest = 0.12f
+        val targetHill = 0.20f
+        val targetMountain = 0.08f
+        val targetUrban = 0.08f
+
+        // 1. 生成建筑群位置
+        val urbanCount = (totalCells * targetUrban).toInt().coerceAtLeast(2)  // 至少2个
+        val urbanCells = generateUrbanCells(size, urbanCount, random)
+
+        // 调试日志
+        android.util.Log.d("MapGen", "生成建筑群格子数: ${urbanCells.size}")
+        android.util.Log.d("MapGen", "建筑群位置: $urbanCells")
+
+        // 2. 计算非建筑群格子的目标数量和比例
+        val nonUrbanCount = totalCells - urbanCount
+        // 非建筑群格子中：平原52%, 森林12%, 山地20%, 高山8%（按比例调整）
+        val nonUrbanPlainRatio = 0.52f / (0.52f + 0.12f + 0.20f + 0.08f)
+        val nonUrbanForestRatio = 0.12f / (0.52f + 0.12f + 0.20f + 0.08f)
+        val nonUrbanHillRatio = 0.20f / (0.52f + 0.12f + 0.20f + 0.08f)
+        val nonUrbanMountainRatio = 0.08f / (0.52f + 0.12f + 0.20f + 0.08f)
+
+        val hillCount = (nonUrbanCount * nonUrbanHillRatio).toInt().coerceAtLeast(1)
+        val forestCount = (nonUrbanCount * nonUrbanForestRatio).toInt().coerceAtLeast(1)
+        val mountainCount = (nonUrbanCount * nonUrbanMountainRatio).toInt().coerceAtLeast(1)
+        val plainCount = (nonUrbanCount * nonUrbanPlainRatio).toInt().coerceAtLeast(1)
+
+        // 创建加权列表（不含建筑群和高山，先生成山地）
+        val weightedTerrains = mutableListOf<TerrainType>()
+        repeat(hillCount) { weightedTerrains.add(TerrainType.HILL) }
+        repeat(forestCount) { weightedTerrains.add(TerrainType.FOREST) }
+        repeat(plainCount) { weightedTerrains.add(TerrainType.PLAIN) }
+
+        // 分配地形到每个格子（先不分配高山）
         for (x in 0 until size) {
             for (y in 0 until size) {
-                map.cells[x][y].terrain = terrainTypes.random(random)
+                val pos = Pair(x, y)
+                val terrain = if (urbanCells.contains(pos)) {
+                    TerrainType.URBAN
+                } else {
+                    weightedTerrains.randomOrNull(random) ?: TerrainType.PLAIN
+                }
+                map.cells[x][y].terrain = terrain
+                terrainCounts[terrain] = terrainCounts[terrain]!! + 1
             }
         }
 
-        // 2. 随机防御工事（各格子独立，每条边30%概率有工事）
-        val fortTypes = FortType.entries.filter { it != FortType.NONE }
+        // 高山必须在山地旁边生成：在所有山地格子周围放置高山
+        val hillCells = mutableListOf<Pair<Int, Int>>()
         for (x in 0 until size) {
             for (y in 0 until size) {
-                for (dir in 0..5) {
-                    // 工事各格子独立，不需要与邻居同步
-                    if (random.nextFloat() < 0.3f) {
-                        val fort = fortTypes.random(random)
-                        map.setFortification(x, y, dir, fort)
+                if (map.cells[x][y].terrain == TerrainType.HILL) {
+                    hillCells.add(Pair(x, y))
+                }
+            }
+        }
+
+        // 从山地格子周围随机选择位置放置高山
+        var mountainsPlaced = 0
+        if (hillCells.isNotEmpty() && mountainCount > 0) {
+            repeat(mountainCount) {
+                if (hillCells.isEmpty()) return@repeat
+                val hillCell = hillCells.random(random)
+                val neighbors = map.getAllNeighborCoords(hillCell.first, hillCell.second).filter { (nx, ny) ->
+                    nx in 0 until size && ny in 0 until size
+                }
+                val availableNeighbors = neighbors.filter { (nx, ny) ->
+                    map.cells[nx][ny].terrain == TerrainType.PLAIN
+                }
+                if (availableNeighbors.isNotEmpty()) {
+                    val (mx, my) = availableNeighbors.random(random)
+                    map.cells[mx][my].terrain = TerrainType.MOUNTAIN
+                    mountainsPlaced++
+                    terrainCounts[TerrainType.MOUNTAIN] = terrainCounts[TerrainType.MOUNTAIN]!! + 1
+                } else {
+                    // 如果没有可用邻居，从其他山地格子周围找
+                    val otherHills = hillCells.filter { it != hillCell }
+                    if (otherHills.isNotEmpty()) {
+                        val otherHill = otherHills.random(random)
+                        val otherNeighbors = map.getAllNeighborCoords(otherHill.first, otherHill.second).filter { (nx, ny) ->
+                            nx in 0 until size && ny in 0 until size && map.cells[nx][ny].terrain == TerrainType.PLAIN
+                        }
+                        if (otherNeighbors.isNotEmpty()) {
+                            val (mx, my) = otherNeighbors.random(random)
+                            map.cells[mx][my].terrain = TerrainType.MOUNTAIN
+                            mountainsPlaced++
+                            terrainCounts[TerrainType.MOUNTAIN] = terrainCounts[TerrainType.MOUNTAIN]!! + 1
+                        }
                     }
                 }
             }
         }
 
-        // 3. 生成河流
+
+
+        // 3. 防御工事（按规则生成）
+        // 规则：
+        // - 只有建筑群格子有防御工事
+        // - 离散建筑群：6条边统一为"栅栏"或"土墙"，比例2:1
+        // - 聚团建筑群：6条边统一为"石墙"
+        // - 聚团内相邻格子之间：防御工事改为"无"
+        assignUrbanFortifications(map, urbanCells, random)
+
+        // 4. 生成河流
         val riverCountStr = riverCountInput.text.toString()
         val riverCount = riverCountStr.toIntOrNull()
         if (riverCount == null || riverCount !in 1..10) {
@@ -678,7 +1056,7 @@ class ComponentDebugActivity : AppCompatActivity() {
         // 清空选中信息
         cellInfoText.text = "点击地图格子查看详细信息"
 
-        // 统计信息
+        // 统计河流和工事
         var riverEdgeCount = 0
         var fortCount = 0
         for (x in 0 until size) {
@@ -689,11 +1067,16 @@ class ComponentDebugActivity : AppCompatActivity() {
                 }
             }
         }
-        // 河流边被两侧都计数了，除以2
-        riverEdgeCount /= 2
-        // 工事各格子独立，直接计数
+        riverEdgeCount /= 2  // 河流边被两侧都计数了，除以2
 
-        mapInfoText.text = "${size}×${size} 地图 | 河流: ${riverCount}条 | 河流边: $riverEdgeCount | 工事边: $fortCount"
+        // 5. 生成地形统计信息
+        val terrainStats = TerrainType.entries.joinToString(" | ") { terrain ->
+            val count = terrainCounts[terrain]!!
+            val percent = (count * 100.0 / totalCells).let { String.format("%.1f", it) }
+            "${terrain.chineseName}: $count($percent%)"
+        }
+
+        mapInfoText.text = "${size}×${size}地图(${totalCells}格) | $terrainStats | 河流${riverCount}条(${riverEdgeCount}边) | 工事${fortCount}边"
     }
 
     /**

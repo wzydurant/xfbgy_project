@@ -84,7 +84,16 @@ class HexMap(val width: Int, val height: Int) {
     }
 
     /**
-     * 获取相邻格子列表
+     * 获取相邻格子列表（按方向编号）
+     * @return 固定6个元素的列表，方向0~5对应邻居坐标
+     */
+    fun getNeighborCoords(x: Int, y: Int): List<Pair<Int, Int>> {
+        val offsets = getNeighborOffsetsCompat(y)
+        return offsets.map { (dx, dy) -> Pair(x + dx, y + dy) }
+    }
+
+    /**
+     * 获取相邻格子列表（只返回有效格子）
      */
     fun getNeighbors(x: Int, y: Int): List<HexCell> {
         val neighbors = mutableListOf<HexCell>()

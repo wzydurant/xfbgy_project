@@ -406,8 +406,9 @@ class HexMapView @JvmOverloads constructor(
             val mx = x1 + dx * t
             val my = y1 + dy * t
 
-            // 绘制小叉（X形）
+            // 绘制完整的小叉（X形：两条交叉的短线）
             canvas.drawLine(mx - nx, my - ny, mx + nx, my + ny, fortPaint)
+            canvas.drawLine(mx - nx, my + ny, mx + nx, my - ny, fortPaint)
         }
     }
 
