@@ -53,6 +53,7 @@ class ComponentDebugActivity : AppCompatActivity() {
 
     // 地图生成相关
     private lateinit var mapSizeInput: EditText
+    private lateinit var riverCountInput: EditText
     private lateinit var mapGridView: HexMapGridView
     private lateinit var mapInfoText: TextView
     private var currentMap: DebugHexMap? = null
@@ -335,6 +336,45 @@ class ComponentDebugActivity : AppCompatActivity() {
         }
         inputLayout.addView(sizeSuffix)
 
+        rootLayout.addView(inputLayout)
+
+        // 河流数量输入行
+        val riverInputLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val riverLabel = TextView(this).apply {
+            text = "河流数量："
+            textSize = 15f
+            setTextColor(Color.WHITE)
+        }
+        riverInputLayout.addView(riverLabel)
+
+        riverCountInput = EditText(this).apply {
+            hint = "1~10"
+            textSize = 15f
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setTextColor(Color.WHITE)
+            setHintTextColor(0xFF80FFFFFF.toInt())
+            setBackgroundColor(0xFF37474F.toInt())
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(80), dpToPx(44))
+        }
+        riverCountInput.setText("1")
+        riverInputLayout.addView(riverCountInput)
+
+        val riverHint = TextView(this).apply {
+            text = " 条（横向/纵向各50%）"
+            textSize = 13f
+            setTextColor(0xFFB0FFFFFF.toInt())
+        }
+        riverInputLayout.addView(riverHint)
+
         val generateBtn = Button(this).apply {
             text = "生成地图"
             textSize = 15f
@@ -348,9 +388,9 @@ class ComponentDebugActivity : AppCompatActivity() {
             }
             setOnClickListener { generateMap() }
         }
-        inputLayout.addView(generateBtn)
+        riverInputLayout.addView(generateBtn)
 
-        rootLayout.addView(inputLayout)
+        rootLayout.addView(riverInputLayout)
 
         // 地图信息
         mapInfoText = TextView(this).apply {
@@ -499,24 +539,15 @@ class ComponentDebugActivity : AppCompatActivity() {
         }
 
         // 3. 生成河流
-        val riverGenerator = DebugRiverGenerator()
-        riverGenerator.generate(map)
-
-        // 4. 同步河流边：确保共边两侧都有河流标记（使河流显示为双线）
-        for (x in 0 until size) {
-            for (y in 0 until size) {
-                for (dir in 0..5) {
-                    // 如果当前格子的这条边有河流，确保相邻格子对应边也有
-                    if (map.edges[x][y][dir].hasRiver) {
-                        val (nx, ny) = map.getNeighborCoord(x, y, dir)
-                        if (map.isValidCell(nx, ny)) {
-                            val oppositeDir = (dir + 3) % 6
-                            map.edges[nx][ny][oppositeDir].hasRiver = true
-                        }
-                    }
-                }
-            }
+        val riverCountStr = riverCountInput.text.toString()
+        val riverCount = riverCountStr.toIntOrNull()
+        if (riverCount == null || riverCount !in 1..10) {
+            Toast.makeText(this, "河流数量请输入1~10之间的数字", Toast.LENGTH_SHORT).show()
+            return
         }
+
+        val riverGenerator = DebugRiverGenerator()
+        riverGenerator.generateMultiple(map, riverCount)
 
         // 4. 显示地图
         currentMap = map
@@ -532,21 +563,21 @@ class ComponentDebugActivity : AppCompatActivity() {
         mapGridView.hexRadius = clampedRadius
 
         // 统计信息
-        var riverCount = 0
+        var riverEdgeCount = 0
         var fortCount = 0
         for (x in 0 until size) {
             for (y in 0 until size) {
                 for (dir in 0..5) {
-                    if (map.edges[x][y][dir].hasRiver) riverCount++
+                    if (map.edges[x][y][dir].hasRiver) riverEdgeCount++
                     if (map.edges[x][y][dir].fortification != FortType.NONE) fortCount++
                 }
             }
         }
         // 河流边被两侧都计数了，除以2
-        riverCount /= 2
+        riverEdgeCount /= 2
         // 工事各格子独立，直接计数
 
-        mapInfoText.text = "${size}×${size} 地图 | 河流边: $riverCount | 工事边: $fortCount"
+        mapInfoText.text = "${size}×${size} 地图 | 河流: ${riverCount}条 | 河流边: $riverEdgeCount | 工事边: $fortCount"
     }
 
     /**
