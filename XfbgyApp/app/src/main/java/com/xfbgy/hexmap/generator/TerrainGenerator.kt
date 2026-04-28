@@ -20,18 +20,27 @@ import kotlin.random.Random
 object TerrainGenerator {
 
     /**
-     * 地形目标比例
-     * 平原55%, 树林15%, 山地11.25%, 高山2.5%, 建筑群2.0%
-     * 注：高山比例已降低至原来的0.5倍，山地比例已提高至原来的1.5倍
-     * 高山必须与山地相连才能存在
+     * 地形目标比例（新算法）
+     * 平原60%, 山地15%, 森林10%, 高山5%, 建筑群16%
+     * 
+     * 建筑群分布规则：
+     * - 聚团：占总格子数的8%，每个聚团2-3格
+     * - 离散格子：占总格子数的8%，互相不相邻也不与聚团相邻
+     * - 高山必须与山地相邻才能存在
      */
     private val terrainProportions = mapOf(
-        TerrainType.PLAIN to 0.55f,
-        TerrainType.FOREST to 0.15f,
-        TerrainType.HILL to 0.1125f,
-        TerrainType.MOUNTAIN to 0.025f,
-        TerrainType.URBAN to 0.020f
+        TerrainType.PLAIN to 0.60f,
+        TerrainType.FOREST to 0.10f,
+        TerrainType.HILL to 0.15f,
+        TerrainType.MOUNTAIN to 0.05f,
+        TerrainType.URBAN to 0.16f
     )
+
+    /**
+     * 建筑群比例常数
+     */
+    private const val URBAN_CLUSTER_RATIO = 0.04f    // 聚团占4%
+    private const val URBAN_DISCRETE_RATIO = 0.08f   // 离散格子占8%
 
     /**
      * 高山团块大小范围
@@ -40,17 +49,16 @@ object TerrainGenerator {
     private const val MOUNTAIN_CLUSTER_MAX = 5
 
     /**
-     * 建筑群团块大小范围
+     * 建筑群聚团大小范围（2-3格）
      */
-    private const val URBAN_CLUSTER_MIN = 1
+    private const val URBAN_CLUSTER_MIN = 2
     private const val URBAN_CLUSTER_MAX = 3
 
     /**
-     * 目标建筑群聚团数量范围
-     * 根据 1:5 比例计算，范围 [2, 6]
+     * 聚团距离阈值（相对于地图边长的比例）
      */
-    private const val MIN_URBAN_CLUSTERS = 2
-    private const val MAX_URBAN_CLUSTERS = 6
+    private const val CLUSTER_SPAWN_ZONE = 1.0 / 6.0    // x < (1/6)n 区域放置聚团1
+    private const val CLUSTER_EXCLUSION_ZONE = 2.0 / 3.0  // 距离 < (2/3)n 的区域禁止放置新聚团
 
     /**
      * 山地/森林团块大小范围
@@ -59,7 +67,7 @@ object TerrainGenerator {
     private const val TERRAIN_CLUSTER_MAX = 10
 
     /**
-     * 聚团概率
+     * 山地/森林聚团扩展概率
      */
     private const val CLUSTER_PROBABILITY = 0.6f
 
@@ -103,10 +111,7 @@ object TerrainGenerator {
         assignDistributedTerrains(hexMap, TerrainType.FOREST, terrainCounts[TerrainType.FOREST] ?: 0,
             TERRAIN_CLUSTER_MIN, TERRAIN_CLUSTER_MAX, random)
 
-        // 第五步：检查并调整建筑群聚团数量
-        adjustUrbanClusters(hexMap, random)
-
-        // 第六步：为建筑群设置防御工事
+        // 第五步：为建筑群设置防御工事
         assignUrbanFortifications(hexMap, random)
     }
 
@@ -266,287 +271,232 @@ object TerrainGenerator {
     }
 
     /**
-     * 初始分配建筑群
+     * 建筑群生成算法（新算法）
      * 
-     * 算法要求：
-     * 1. 聚团数 : 离散格子数 ≈ 1:5
-     * 2. 最少2个聚团，最多6个
-     * 3. 每个聚团 1-3 格
-     * 4. 聚团之间距离 ≥ 2/3 地图边长
-     * 5. 离散格子之间不能相互相邻
+     * 算法步骤：
+     * 1. 在x < (1/6)n区域放置聚团1
+     * 2. 计算禁入区域（距聚团<(2/3)n的点）
+     * 3. 在空图集中放置聚团2
+     * 4. 根据1:5比例计算聚团目标数：在空图集中放置聚团直到满足比例
+     * 5. 在空图集中放置离散建筑群格子
+     * 
+     * 比例控制：每5个离散格子对应1个聚团
+     * 
+     * @param hexMap 地图对象
+     * @param totalCells 地图总格子数
+     * @param random 随机数生成器
      */
     private fun assignInitialUrbanTerrains(
         hexMap: HexMap,
-        totalCount: Int,
+        totalCells: Int,
         random: Random
     ) {
-        if (totalCount <= 0) return
-
-        // 计算聚团数量
-        // 根据 1:5 比例：聚团数 C，离散格子数 D ≈ 5*C
-        // 总格子数 N ≈ C * avgClusterSize + 5*C ≈ C * 7
-        // 所以 C ≈ N / 7，范围 [2, 6]
-        val clusterCount = (totalCount / 7.0).toInt().coerceIn(2, 6)
-
-        // 确保有足够的格子来形成聚团
-        val minTilesForClusters = clusterCount
+        val mapSize = maxOf(hexMap.width, hexMap.height)
         
-        if (totalCount < minTilesForClusters) {
-            // 格子太少，全部作为离散建筑群（但保证不相邻）
-            val placedDiscretes = mutableListOf<Pair<Int, Int>>()
-            for (i in 0 until totalCount) {
-                var attempts = 0
-                while (attempts < 200) {
-                    val x = random.nextInt(hexMap.width)
-                    val y = random.nextInt(hexMap.height)
-                    if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                        // 检查是否与已放置的离散格子相邻
-                        var adjacent = false
-                        for (pos in placedDiscretes) {
-                            if (hexDistance(x, y, pos.first, pos.second, hexMap) < 1.5) {
-                                adjacent = true
-                                break
-                            }
-                        }
-                        if (!adjacent) {
-                            hexMap.cells[x][y].terrain = TerrainType.URBAN
-                            placedDiscretes.add(Pair(x, y))
-                            break
-                        }
-                    }
-                    attempts++
-                }
-            }
-            return
-        }
-
-        // 计算每个聚团的大小（1-3格随机）
-        val clusterTileCounts = mutableListOf<Int>()
-        var clusterTilesTotal = 0
-        repeat(clusterCount) {
-            val size = random.nextInt(URBAN_CLUSTER_MIN, URBAN_CLUSTER_MAX + 1)
-            clusterTileCounts.add(size)
-            clusterTilesTotal += size
-        }
+        // 计算离散格子目标数（占8%）
+        val discreteTargetCount = (totalCells * URBAN_DISCRETE_RATIO).toInt()
         
-        // 计算离散格子数量 = 总数 - 聚团格子数
-        val discreteCount = totalCount - clusterTilesTotal
-
-        // 计算聚团之间的最小距离：2/3 地图边长
-        val minClusterDistance = min(hexMap.width, hexMap.height) * 2.0 / 3.0
-
-        // 第一步：放置聚团（贪心放置，确保距离约束）
-        val clusterCenters = mutableListOf<Pair<Int, Int>>()
-        val placedClusterTiles = mutableSetOf<Pair<Int, Int>>()
-        
-        repeat(clusterCount) { clusterIndex ->
-            val clusterSize = clusterTileCounts.getOrElse(clusterIndex) { 1 }
-            var placed = false
-            var attempts = 0
-            val maxAttempts = 1000
-
-            while (!placed && attempts < maxAttempts) {
-                attempts++
-                
-                val centerX = random.nextInt(hexMap.width)
-                val centerY = random.nextInt(hexMap.height)
-                
-                // 逐渐放宽距离约束
-                val distanceThreshold = when {
-                    attempts > 500 -> min(hexMap.width, hexMap.height) / 3.0
-                    attempts > 200 -> min(hexMap.width, hexMap.height) / 2.0
-                    else -> minClusterDistance
-                }
-                
-                // 检查距离其他聚团中心
-                var validPosition = true
-                for (existingCenter in clusterCenters) {
-                    val dist = hexDistance(centerX, centerY, existingCenter.first, existingCenter.second, hexMap)
-                    if (dist < distanceThreshold) {
-                        validPosition = false
-                        break
-                    }
-                }
-                
-                if (!validPosition) continue
-                if (hexMap.cells[centerX][centerY].terrain != TerrainType.PLAIN) continue
-                
-                // 生长聚团
-                val clusterTiles = growUrbanCluster(hexMap, centerX, centerY, clusterSize, random)
-                
-                if (clusterTiles.isNotEmpty()) {
-                    clusterCenters.add(Pair(centerX, centerY))
-                    placedClusterTiles.addAll(clusterTiles)
-                    placed = true
-                }
-            }
-            
-            // 如果无法放置完整聚团，放置单格
-            if (!placed) {
-                var placedSingle = false
-                for (attempt in 0 until 200) {
-                    val x = random.nextInt(hexMap.width)
-                    val y = random.nextInt(hexMap.height)
-                    
-                    if (hexMap.cells[x][y].terrain != TerrainType.PLAIN) continue
-                    
-                    val distThreshold = min(hexMap.width, hexMap.height) / 3.0
-                    var valid = true
-                    for (center in clusterCenters) {
-                        if (hexDistance(x, y, center.first, center.second, hexMap) < distThreshold) {
-                            valid = false
-                            break
-                        }
-                    }
-                    
-                    if (valid) {
-                        hexMap.cells[x][y].terrain = TerrainType.URBAN
-                        clusterCenters.add(Pair(x, y))
-                        placedClusterTiles.add(Pair(x, y))
-                        placedSingle = true
-                        break
-                    }
-                }
-                
-                // 强制放置
-                if (!placedSingle) {
-                    for (attempt in 0 until 100) {
-                        val x = random.nextInt(hexMap.width)
-                        val y = random.nextInt(hexMap.height)
-                        if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                            hexMap.cells[x][y].terrain = TerrainType.URBAN
-                            clusterCenters.add(Pair(x, y))
-                            placedClusterTiles.add(Pair(x, y))
-                            break
-                        }
-                    }
-                }
+        // 初始化：所有格子都在空图集
+        val emptySet = mutableSetOf<Pair<Int, Int>>()
+        for (y in 0 until hexMap.height) {
+            for (x in 0 until hexMap.width) {
+                emptySet.add(Pair(x, y))
             }
         }
         
-        // 强制保证最少2个聚团
-        if (clusterCenters.size < 2) {
-            var toAdd = 2 - clusterCenters.size
-            while (toAdd > 0) {
-                for (attempt in 0 until 200) {
-                    val x = random.nextInt(hexMap.width)
-                    val y = random.nextInt(hexMap.height)
-                    if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                        hexMap.cells[x][y].terrain = TerrainType.URBAN
-                        clusterCenters.add(Pair(x, y))
-                        placedClusterTiles.add(Pair(x, y))
-                        toAdd--
-                        break
-                    }
-                    if (toAdd <= 0) break
-                }
-                break
-            }
-        }
-
-        // 第二步：放置离散建筑群
-        // 离散格子之间不能相邻，且应远离聚团
-        val placedDiscretes = mutableSetOf<Pair<Int, Int>>()
-        var remainingDiscrete = discreteCount
+        // 聚团集：存放所有聚团的坐标
+        val clusterSet = mutableSetOf<Pair<Int, Int>>()
         
-        // 第一轮：严格要求（远离聚团 2.5 格，离散之间距离 1.5 格）
-        repeat(2000) {
-            if (remainingDiscrete <= 0) return@repeat
-            
-            val x = random.nextInt(hexMap.width)
+        // ====== 步骤1：在 x < (1/6)n 区域放置聚团1 ======
+        val spawnZoneWidth = (mapSize * CLUSTER_SPAWN_ZONE).toInt()
+        
+        // 在指定区域找一个有效位置作为聚团1的种子
+        var cluster1Seed: Pair<Int, Int>? = null
+        repeat(1000) {
+            val x = random.nextInt(spawnZoneWidth)
             val y = random.nextInt(hexMap.height)
-            
-            if (hexMap.cells[x][y].terrain != TerrainType.PLAIN) return@repeat
-            
-            // 检查是否距离聚团足够远
-            var nearCluster = false
-            for (center in clusterCenters) {
-                if (hexDistance(x, y, center.first, center.second, hexMap) < 2.5) {
-                    nearCluster = true
-                    break
+            if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
+                cluster1Seed = Pair(x, y)
+                return@repeat
+            }
+        }
+        
+        // 如果找不到合适位置，放宽搜索
+        if (cluster1Seed == null) {
+            repeat(1000) {
+                val x = random.nextInt(hexMap.width)
+                val y = random.nextInt(hexMap.height)
+                if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
+                    cluster1Seed = Pair(x, y)
+                    return@repeat
                 }
             }
-            if (nearCluster) return@repeat
+        }
+        
+        // 生长聚团1（2-3格）
+        cluster1Seed?.let { seed ->
+            val clusterSize = random.nextInt(URBAN_CLUSTER_MIN, URBAN_CLUSTER_MAX + 1)
+            val tiles = growUrbanCluster(hexMap, seed.first, seed.second, clusterSize, random)
+            clusterSet.addAll(tiles)
+        }
+        
+        // ====== 步骤2：从空图集移除聚团集和禁入区域 ======
+        emptySet.removeAll(clusterSet)
+        
+        // 计算禁入区域：距离所有聚团 < (2/3)n 的点
+        val exclusionZone = mutableSetOf<Pair<Int, Int>>()
+        val exclusionDistance = mapSize * CLUSTER_EXCLUSION_ZONE
+        
+        for (pos in emptySet.toList()) {
+            var minDistToCluster = Double.MAX_VALUE
+            for (clusterPos in clusterSet) {
+                val dist = hexDistance(pos.first, pos.second, clusterPos.first, clusterPos.second, hexMap)
+                minDistToCluster = minOf(minDistToCluster, dist)
+            }
+            if (minDistToCluster < exclusionDistance) {
+                exclusionZone.add(pos)
+            }
+        }
+        
+        emptySet.removeAll(exclusionZone)
+        
+        // ====== 步骤3：在空图集中放置聚团2 ======
+        if (emptySet.isNotEmpty()) {
+            val cluster2Seed = emptySet.random(random)
+            val clusterSize = random.nextInt(URBAN_CLUSTER_MIN, URBAN_CLUSTER_MAX + 1)
+            val tiles = growUrbanCluster(hexMap, cluster2Seed.first, cluster2Seed.second, clusterSize, random)
+            clusterSet.addAll(tiles)
             
-            // 检查是否与其他离散格子相邻
-            var adjacentToDiscrete = false
-            for (pos in placedDiscretes) {
-                if (hexDistance(x, y, pos.first, pos.second, hexMap) < 1.5) {
-                    adjacentToDiscrete = true
-                    break
+            // 更新空图集
+            emptySet.removeAll(clusterSet)
+        }
+        
+        // ====== 步骤4：继续生成聚团直到达到目标格子数 ======
+        // 聚团目标格子数 = 总格子数 * 4%
+        val clusterTargetCount = (totalCells * URBAN_CLUSTER_RATIO).toInt()
+        
+        // 继续生成聚团直到达到目标格子数
+        while (clusterSet.size < clusterTargetCount && emptySet.isNotEmpty()) {
+            // 找一个不与聚团集相邻的位置
+            var newSeed: Pair<Int, Int>? = null
+            
+            // 优先在远离聚团的区域找
+            val candidates = emptySet.filter { pos ->
+                var adjacentToCluster = false
+                for (clusterPos in clusterSet) {
+                    if (hexDistance(pos.first, pos.second, clusterPos.first, clusterPos.second, hexMap) < 1.5) {
+                        adjacentToCluster = true
+                        break
+                    }
+                }
+                !adjacentToCluster
+            }
+            
+            if (candidates.isNotEmpty()) {
+                newSeed = candidates.random(random)
+            } else if (emptySet.isNotEmpty()) {
+                // 放宽条件：允许与聚团相邻但距离聚团足够远
+                val relaxedCandidates = emptySet.filter { pos ->
+                    var tooClose = false
+                    for (clusterPos in clusterSet) {
+                        if (hexDistance(pos.first, pos.second, clusterPos.first, clusterPos.second, hexMap) < 2.0) {
+                            tooClose = true
+                            break
+                        }
+                    }
+                    !tooClose
+                }
+                if (relaxedCandidates.isNotEmpty()) {
+                    newSeed = relaxedCandidates.random(random)
+                } else {
+                    newSeed = emptySet.random(random)
                 }
             }
-            if (adjacentToDiscrete) return@repeat
             
-            hexMap.cells[x][y].terrain = TerrainType.URBAN
-            placedDiscretes.add(Pair(x, y))
-            remainingDiscrete--
+            newSeed?.let { seed ->
+                val clusterSize = random.nextInt(URBAN_CLUSTER_MIN, URBAN_CLUSTER_MAX + 1)
+                val tiles = growUrbanCluster(hexMap, seed.first, seed.second, clusterSize, random)
+                clusterSet.addAll(tiles)
+                
+                // 更新空图集
+                emptySet.removeAll(clusterSet)
+            } ?: break
+        }
+        
+        // ====== 步骤5：放置离散建筑群格子 ======
+        val placedDiscretes = mutableSetOf<Pair<Int, Int>>()
+        var remainingDiscrete = discreteTargetCount
+        
+        // 第一轮：严格要求（不与聚团相邻，离散之间不相邻）
+        repeat(5000) {
+            if (remainingDiscrete <= 0 || emptySet.isEmpty()) return@repeat
+            
+            val candidates = emptySet.filter { pos ->
+                // 不与任何聚团相邻
+                var adjacentToCluster = false
+                for (clusterPos in clusterSet) {
+                    if (hexDistance(pos.first, pos.second, clusterPos.first, clusterPos.second, hexMap) < 1.5) {
+                        adjacentToCluster = true
+                        break
+                    }
+                }
+                !adjacentToCluster
+            }.filter { pos ->
+                // 不与其他离散格子相邻
+                var adjacentToDiscrete = false
+                for (discretePos in placedDiscretes) {
+                    if (hexDistance(pos.first, pos.second, discretePos.first, discretePos.second, hexMap) < 1.5) {
+                        adjacentToDiscrete = true
+                        break
+                    }
+                }
+                !adjacentToDiscrete
+            }
+            
+            if (candidates.isNotEmpty()) {
+                val chosen = candidates.random(random)
+                hexMap.cells[chosen.first][chosen.second].terrain = TerrainType.URBAN
+                placedDiscretes.add(chosen)
+                emptySet.remove(chosen)
+                remainingDiscrete--
+            }
         }
         
         // 第二轮：放宽约束（只要求不与离散格子相邻）
         if (remainingDiscrete > 0) {
             repeat(2000) {
-                if (remainingDiscrete <= 0) return@repeat
+                if (remainingDiscrete <= 0 || emptySet.isEmpty()) return@repeat
                 
-                val x = random.nextInt(hexMap.width)
-                val y = random.nextInt(hexMap.height)
-                
-                if (hexMap.cells[x][y].terrain != TerrainType.PLAIN) return@repeat
-                
-                // 只检查是否与其他离散格子相邻
-                var adjacentToDiscrete = false
-                for (pos in placedDiscretes) {
-                    if (hexDistance(x, y, pos.first, pos.second, hexMap) < 1.5) {
-                        adjacentToDiscrete = true
-                        break
-                    }
-                }
-                if (adjacentToDiscrete) return@repeat
-                
-                hexMap.cells[x][y].terrain = TerrainType.URBAN
-                placedDiscretes.add(Pair(x, y))
-                remainingDiscrete--
-            }
-        }
-        
-        // 第三轮：放到任意空白位置（尽量保持分散）
-        if (remainingDiscrete > 0) {
-            repeat(1000) {
-                if (remainingDiscrete <= 0) return@repeat
-                
-                val x = random.nextInt(hexMap.width)
-                val y = random.nextInt(hexMap.height)
-                
-                if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                    // 即使放宽条件，也尽量不与离散格子完全相邻
+                val candidates = emptySet.filter { pos ->
                     var adjacentToDiscrete = false
-                    for (pos in placedDiscretes) {
-                        if (hexDistance(x, y, pos.first, pos.second, hexMap) < 1.0) {
+                    for (discretePos in placedDiscretes) {
+                        if (hexDistance(pos.first, pos.second, discretePos.first, discretePos.second, hexMap) < 1.5) {
                             adjacentToDiscrete = true
                             break
                         }
                     }
-                    if (!adjacentToDiscrete) {
-                        hexMap.cells[x][y].terrain = TerrainType.URBAN
-                        placedDiscretes.add(Pair(x, y))
-                        remainingDiscrete--
-                    }
+                    !adjacentToDiscrete
+                }
+                
+                if (candidates.isNotEmpty()) {
+                    val chosen = candidates.random(random)
+                    hexMap.cells[chosen.first][chosen.second].terrain = TerrainType.URBAN
+                    placedDiscretes.add(chosen)
+                    emptySet.remove(chosen)
+                    remainingDiscrete--
                 }
             }
         }
         
-        // 第四轮：最后兜底，放到任何空白位置
+        // 第三轮：最后兜底
         if (remainingDiscrete > 0) {
-            repeat(500) {
-                if (remainingDiscrete <= 0) return@repeat
+            repeat(1000) {
+                if (remainingDiscrete <= 0 || emptySet.isEmpty()) return@repeat
                 
-                val x = random.nextInt(hexMap.width)
-                val y = random.nextInt(hexMap.height)
-                
-                if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                    hexMap.cells[x][y].terrain = TerrainType.URBAN
-                    remainingDiscrete--
-                }
+                val chosen = emptySet.random(random)
+                hexMap.cells[chosen.first][chosen.second].terrain = TerrainType.URBAN
+                emptySet.remove(chosen)
+                remainingDiscrete--
             }
         }
     }
@@ -620,33 +570,45 @@ object TerrainGenerator {
     }
 
     /**
-     * 检查并调整建筑群聚团数量
+     * 从坐标集合中识别聚团（不修改地图）
+     * @param cellSet 格子坐标集合
+     * @param hexMap 地图对象
+     * @return List of clusters, each cluster is a list of cell coordinates
      */
-    private fun adjustUrbanClusters(hexMap: HexMap, random: Random) {
-        // 识别所有建筑群聚团
-        val clusters = identifyUrbanClusters(hexMap)
+    private fun identifyClustersFromSet(cellSet: Set<Pair<Int, Int>>, hexMap: HexMap): List<List<Pair<Int, Int>>> {
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        val clusters = mutableListOf<List<Pair<Int, Int>>>()
 
-        val currentCount = clusters.size
+        for (pos in cellSet) {
+            if (pos in visited) continue
 
-        if (currentCount < MIN_URBAN_CLUSTERS) {
-            // 需要添加更多建筑群聚团
-            val toAdd = MIN_URBAN_CLUSTERS - currentCount
-            for (i in 0 until toAdd) {
-                addRandomUrbanCluster(hexMap, random)
-            }
-        } else if (currentCount > MAX_URBAN_CLUSTERS) {
-            // 需要减少建筑群聚团
-            val toRemove = currentCount - MAX_URBAN_CLUSTERS
-            val removableClusters = clusters.filter { it.size <= 2 }  // 只移除小聚团
-            val toRemoveClusters = removableClusters.shuffled(random).take(toRemove)
+            // BFS找聚团
+            val cluster = mutableListOf<Pair<Int, Int>>()
+            val queue = ArrayDeque<Pair<Int, Int>>()
+            queue.add(pos)
 
-            for (cluster in toRemoveClusters) {
-                for (cell in cluster) {
-                    // 替换为平原
-                    hexMap.cells[cell.first][cell.second].terrain = TerrainType.PLAIN
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                if (current in visited) continue
+                if (current !in cellSet) continue
+
+                visited.add(current)
+                cluster.add(current)
+
+                val neighbors = hexMap.getNeighborCoords(current.first, current.second)
+                for (neighbor in neighbors) {
+                    if (neighbor !in visited && neighbor in cellSet) {
+                        queue.add(neighbor)
+                    }
                 }
             }
+
+            if (cluster.isNotEmpty()) {
+                clusters.add(cluster)
+            }
         }
+
+        return clusters
     }
 
     /**
@@ -692,61 +654,6 @@ object TerrainGenerator {
         }
 
         return clusters
-    }
-
-    /**
-     * 添加随机建筑群聚团（在与现有建筑群距离足够远的位置）
-     */
-    private fun addRandomUrbanCluster(hexMap: HexMap, random: Random) {
-        // 找到所有现有建筑群格子
-        val existingUrbans = mutableListOf<Pair<Int, Int>>()
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                if (hexMap.cells[x][y].terrain == TerrainType.URBAN) {
-                    existingUrbans.add(Pair(x, y))
-                }
-            }
-        }
-
-        // 找到距离所有现有建筑群足够远的位置
-        val minDistThreshold = maxOf(3, minOf(hexMap.width, hexMap.height) / 2)
-        val candidates = mutableListOf<Pair<Int, Int>>()
-
-        for (y in 0 until hexMap.height) {
-            for (x in 0 until hexMap.width) {
-                if (hexMap.cells[x][y].terrain != TerrainType.PLAIN) continue
-
-                // 检查与所有现有建筑群格子的距离
-                var tooClose = false
-                for (urban in existingUrbans) {
-                    if (hexDistance(x, y, urban.first, urban.second, hexMap) < minDistThreshold) {
-                        tooClose = true
-                        break
-                    }
-                }
-
-                if (!tooClose) {
-                    candidates.add(Pair(x, y))
-                }
-            }
-        }
-
-        if (candidates.isEmpty()) {
-            // 如果没有合适位置，尝试放宽条件
-            for (y in 0 until hexMap.height) {
-                for (x in 0 until hexMap.width) {
-                    if (hexMap.cells[x][y].terrain == TerrainType.PLAIN) {
-                        hexMap.cells[x][y].terrain = TerrainType.URBAN
-                        return
-                    }
-                }
-            }
-            return
-        }
-
-        // 添加一个建筑群格子
-        val pos = candidates.random(random)
-        hexMap.cells[pos.first][pos.second].terrain = TerrainType.URBAN
     }
 
     /**

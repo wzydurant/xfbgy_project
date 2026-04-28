@@ -609,29 +609,25 @@ class ComponentDebugActivity : AppCompatActivity() {
     }
 
     /**
-     * 生成建筑群位置（聚团 + 离散格子混合）
-     *
-     * 规则：
-     * - 聚团数量与建筑群格比例为1:5（聚团算1个格子）
-     * - 聚团数量限制在2-6个
-     * - 每个聚团1个格子（确保聚团数:离散格子数 ≈ 1:5）
-     * - 聚团间距离≥2/3边长
-     * - 剩余格子作为离散格子分布
+     * 生成建筑群位置（聚团 + 离散格子）
+     * 按照以下算法：
+     * 1. 在x坐标＜（1/6）n，随机选一个位置作为聚团1
+     * 2. 移除与聚团距离＜（2/3）n的坐标
+     * 3. 在剩余位置中随机选一个作为聚团2
+     * 4. 继续生成聚团（要求不与现有聚团相邻）
+     * 5. 聚团总数超过m*8%时停止
+     * 6. 再分布m*8%的离散建筑群格子（互相不相邻，不与聚团相邻）
      *
      * @param size 地图大小
-     * @param urbanCount 建筑群数量
      * @param random 随机数生成器
-     * @return 建筑群格子坐标集合
+     * @return Pair(聚团格子集合, 离散建筑群格子集合)
      */
-    private fun generateUrbanCells(size: Int, urbanCount: Int, random: Random): Set<Pair<Int, Int>> {
-        val minClusterDist = maxOf(3, size / 2)  // 聚团中心间最小距离（≥1/2边长，至少3格）
+    private fun generateUrbanCells(size: Int, random: Random): Pair<Set<Pair<Int, Int>>, Set<Pair<Int, Int>>> {
+        val n = size
+        val m = n * n
 
-        // ========== 修复：确保至少有2个聚团 ==========
-        // 每个聚团至少需要1个格子，如果 urbanCount 不足以生成2个聚团，强制增加
-        val effectiveUrbanCount = maxOf(urbanCount, 4)  // 至少4个格子，确保能生成2个聚团
-
-        // 计算聚团数量：至少2个
-        val clusterCount = maxOf(2, (effectiveUrbanCount / 5.0).toInt().coerceAtMost(6))
+        android.util.Log.d("MapGen", "========== 开始建筑群生成 ==========")
+        android.util.Log.d("MapGen", "地图大小: ${n}×${n}, 总格子数: ${m}")
 
         // 所有格子列表
         val allCells = mutableListOf<Pair<Int, Int>>()
@@ -641,105 +637,303 @@ class ComponentDebugActivity : AppCompatActivity() {
             }
         }
 
-        // 确保至少有2个格子
-        if (allCells.size < 2) {
-            return emptySet()
-        }
+        // 空图集：未放置任何地形的格子
+        val emptySet = allCells.toMutableSet()
+        // 聚团集：聚团占有的坐标集合
+        val clusterSet = mutableSetOf<Pair<Int, Int>>()
+        // 离散建筑集
+        val discreteSet = mutableSetOf<Pair<Int, Int>>()
 
-        // ========== 1. 生成聚团中心 ==========
-        // 策略：确保至少2个聚团中心，且它们之间距离足够远（不会被BFS合并）
-        val clusterCenters = mutableListOf<Pair<Int, Int>>()
+        // ========== 步骤1：在x坐标＜（1/6）n随机选一个位置作为聚团1 ==========
+        android.util.Log.d("MapGen", "========== 步骤1：放置聚团1 ==========")
+        val cluster1Candidates = allCells.filter { it.first < n / 6 }
+        if (cluster1Candidates.isEmpty()) {
+            android.util.Log.d("MapGen", "错误：无法找到聚团1的候选位置")
+            return Pair(emptySet(), emptySet())
+        }
+        val cluster1Pos = cluster1Candidates.random(random)
         
-        // 随机打乱格子顺序
-        allCells.shuffle(random)
+        // 扩展聚团1为2-3格
+        val cluster1Cells = expandToCluster(cluster1Pos, 2 + random.nextInt(2), size, clusterSet, random)
+        clusterSet.addAll(cluster1Cells)
+        emptySet.removeAll(cluster1Cells.toSet())
+
+        android.util.Log.d("MapGen", "聚团1中心位置: $cluster1Pos")
+        android.util.Log.d("MapGen", "聚团1格子: $cluster1Cells, 大小: ${cluster1Cells.size}")
+        android.util.Log.d("MapGen", "聚团1加入聚团集后，聚团数量: ${countClusters(clusterSet)}, 聚团集大小: ${clusterSet.size}")
+
+        // ========== 步骤2：移除与聚团距离＜（2/3）n的坐标 ==========
+        android.util.Log.d("MapGen", "========== 步骤2：计算禁入区域 ==========")
+        val exclusionDistance = 2.0 * n / 3
+        val excludedCells = mutableSetOf<Pair<Int, Int>>()
         
-        // 第一个聚团中心：随机选择
-        clusterCenters.add(allCells[0])
-        
-        // 第二个聚团中心：选择与第一个距离最大的，且距离必须 >= 2（避免BFS合并）
-        var maxDist = 0
-        var secondCenter = allCells[0]
-        for (cell in allCells) {
-            if (cell == clusterCenters[0]) continue
-            val dist = hexDistance(cell, clusterCenters[0])
-            // 优先选择距离 >= 2 的格子（避免BFS合并），其次选择距离最大的
-            if (dist >= 2 && dist > maxDist) {
-                maxDist = dist
-                secondCenter = cell
-            } else if (maxDist < 2 && dist > maxDist) {
-                // 如果还没找到距离 >= 2 的，选择距离最大的
-                maxDist = dist
-                secondCenter = cell
+        for (pos in emptySet.toList()) {
+            var minDistToCluster = Int.MAX_VALUE
+            for (clusterPos in clusterSet) {
+                val dist = hexDistance(pos, clusterPos)
+                minDistToCluster = minOf(minDistToCluster, dist)
+            }
+            if (minDistToCluster < exclusionDistance) {
+                excludedCells.add(pos)
             }
         }
         
-        // 确保第二个中心与第一个距离至少为 2（不会被BFS合并为同一聚团）
-        if (hexDistance(secondCenter, clusterCenters[0]) < 2) {
-            // 如果找不到距离 >= 2 的，强制找一个距离最大的
-            for (cell in allCells) {
-                if (cell == clusterCenters[0]) continue
-                val dist = hexDistance(cell, clusterCenters[0])
-                if (dist > maxDist) {
-                    maxDist = dist
-                    secondCenter = cell
-                }
-            }
+        emptySet.removeAll(excludedCells)
+        android.util.Log.d("MapGen", "禁入区域距离阈值: ${exclusionDistance}")
+        android.util.Log.d("MapGen", "禁入区域格子数: ${excludedCells.size}")
+        android.util.Log.d("MapGen", "移除禁入区域后，空图集大小: ${emptySet.size}")
+
+        // ========== 步骤3：在空图集中随机一个坐标作为聚团2 ==========
+        android.util.Log.d("MapGen", "========== 步骤3：放置聚团2 ==========")
+        if (emptySet.isNotEmpty()) {
+            val cluster2Pos = emptySet.random(random)
+            val cluster2Cells = expandToCluster(cluster2Pos, 2 + random.nextInt(2), size, clusterSet, random)
+            clusterSet.addAll(cluster2Cells)
+            emptySet.removeAll(cluster2Cells.toSet())
+            
+            // 移除聚团集和离散建筑集的所有邻居
+            removeNeighborsFromSets(emptySet, clusterSet, discreteSet, size)
+
+            android.util.Log.d("MapGen", "聚团2中心位置: $cluster2Pos")
+            android.util.Log.d("MapGen", "聚团2格子: $cluster2Cells, 大小: ${cluster2Cells.size}")
+            android.util.Log.d("MapGen", "聚团2加入后，聚团数量: ${countClusters(clusterSet)}, 聚团集大小: ${clusterSet.size}")
+            android.util.Log.d("MapGen", "移除邻居后，空图集大小: ${emptySet.size}")
+        } else {
+            android.util.Log.d("MapGen", "空图集为空，跳过聚团2生成")
         }
+
+        // ========== 步骤4：计算聚团总数 ==========
+        android.util.Log.d("MapGen", "========== 步骤4：计算聚团总数 ==========")
+        val clusterCount = countClusters(clusterSet)
+        android.util.Log.d("MapGen", "当前聚团总数 x = $clusterCount")
+
+        // ========== 步骤5：在空图集中生成离散建筑集（x*5次） ==========
+        android.util.Log.d("MapGen", "========== 步骤5：生成离散建筑集 ==========")
+        val discreteTarget = clusterCount * 5
+        android.util.Log.d("MapGen", "离散建筑目标数量: ${discreteTarget}")
         
-        clusterCenters.add(secondCenter)
+        repeat(discreteTarget) { index ->
+            if (emptySet.isEmpty()) {
+                android.util.Log.d("MapGen", "空图集为空，停止生成离散建筑，已生成: ${discreteSet.size}")
+                return@repeat
+            }
+            
+            val pos = emptySet.random(random)
+            discreteSet.add(pos)
+            emptySet.remove(pos)
+            
+            // 移除聚团集和离散建筑集的所有邻居
+            removeNeighborsFromSets(emptySet, clusterSet, discreteSet, size)
+            
+            android.util.Log.d("MapGen", "第${index + 1}个离散建筑: $pos, 已生成: ${discreteSet.size}, 空图集剩余: ${emptySet.size}")
+        }
 
-        android.util.Log.d("MapGen", "聚团中心: $clusterCenters, 数量: ${clusterCenters.size}")
+        // ========== 步骤6-9：循环生成聚团和离散建筑 ==========
+        android.util.Log.d("MapGen", "========== 步骤6-9：循环生成 ==========")
+        val urbanTarget = (m * 0.10 - 8).toInt().coerceAtLeast(0)  // 总建筑群目标 = m*10% - 8
+        var loopCount = 0
         
-        // 如果还需要更多聚团中心（clusterCount > 2），尝试添加
-        if (clusterCount > 2) {
-            while (clusterCenters.size < clusterCount) {
-                var bestCell: Pair<Int, Int>? = null
-                var bestMinDist = 0
-
-                for (cell in allCells) {
-                    if (cell in clusterCenters) continue
-
-                    val minDist = clusterCenters.minOf { hexDistance(it, cell) }
-                    // 确保与所有现有中心的距离都 >= 2（不会被BFS合并）
-                    if (minDist >= 2 && minDist > bestMinDist) {
-                        bestMinDist = minDist
-                        bestCell = cell
+        while (true) {
+            loopCount++
+            android.util.Log.d("MapGen", "--- 循环第${loopCount}次 ---")
+            
+            // 步骤6：检查终止条件
+            val totalUrbanCount = clusterSet.size + discreteSet.size
+            android.util.Log.d("MapGen", "总建筑群格子数: ${totalUrbanCount}, 目标: ${urbanTarget}")
+            
+            if (totalUrbanCount >= urbanTarget || emptySet.isEmpty()) {
+                android.util.Log.d("MapGen", "满足终止条件：总坐标数>=${urbanTarget}或空图集为空，跳到步骤10")
+                break
+            }
+            
+            // 步骤7：从空图集随机坐标生成聚团（聚团的所有坐标必须都在空图集中）
+            if (!emptySet.isEmpty()) {
+                val newClusterPos = emptySet.random(random)
+                
+                // 检查该位置及其邻居是否都在空图集中（用于形成2-3格聚团）
+                val allClusterCells = mutableListOf(newClusterPos)
+                allClusterCells.addAll(getNeighborCoords(newClusterPos.first, newClusterPos.second, size).filter { it in emptySet })
+                
+                // 尝试扩展聚团
+                val expandedCluster = mutableListOf(newClusterPos)
+                val tempOccupied = clusterSet.toMutableSet()
+                
+                for (pos in allClusterCells) {
+                    if (expandedCluster.size >= 3) break
+                    if (pos in emptySet && pos !in tempOccupied) {
+                        expandedCluster.add(pos)
+                        tempOccupied.add(pos)
                     }
                 }
-
-                if (bestCell != null) {
-                    clusterCenters.add(bestCell)
+                
+                if (expandedCluster.size >= 2) {
+                    clusterSet.addAll(expandedCluster)
+                    emptySet.removeAll(expandedCluster.toSet())
+                    
+                    // 移除聚团集和离散建筑集的所有邻居
+                    removeNeighborsFromSets(emptySet, clusterSet, discreteSet, size)
+                    
+                    android.util.Log.d("MapGen", "生成新聚团: $expandedCluster, 大小: ${expandedCluster.size}")
+                    android.util.Log.d("MapGen", "聚团数量: ${countClusters(clusterSet)}, 聚团集大小: ${clusterSet.size}")
+                    android.util.Log.d("MapGen", "移除邻居后，空图集大小: ${emptySet.size}")
                 } else {
-                    break  // 无法添加更多时退出
+                    android.util.Log.d("MapGen", "无法形成聚团（可用位置不足），跳过步骤7")
+                }
+            }
+            
+            // 步骤8：从空图集随机坐标放入离散建筑集
+            if (!emptySet.isEmpty()) {
+                val newDiscretePos = emptySet.random(random)
+                discreteSet.add(newDiscretePos)
+                emptySet.remove(newDiscretePos)
+                
+                // 移除聚团集和离散建筑集的所有邻居
+                removeNeighborsFromSets(emptySet, clusterSet, discreteSet, size)
+                
+                android.util.Log.d("MapGen", "生成新离散建筑: $newDiscretePos, 离散建筑数量: ${discreteSet.size}")
+                android.util.Log.d("MapGen", "移除邻居后，空图集大小: ${emptySet.size}")
+            }
+            
+            // 防止无限循环
+            if (loopCount > 500) {
+                android.util.Log.d("MapGen", "达到最大循环次数，强制退出")
+                break
+            }
+        }
+
+        // ========== 步骤10：汇总结果 ==========
+        android.util.Log.d("MapGen", "========== 步骤10：汇总结果 ==========")
+        android.util.Log.d("MapGen", "聚团数量: ${countClusters(clusterSet)}")
+        android.util.Log.d("MapGen", "聚团集格子数: ${clusterSet.size}")
+        android.util.Log.d("MapGen", "聚团集格子: $clusterSet")
+        android.util.Log.d("MapGen", "离散建筑集格子数: ${discreteSet.size}")
+        android.util.Log.d("MapGen", "离散建筑集格子: $discreteSet")
+        android.util.Log.d("MapGen", "总建筑群格子数: ${clusterSet.size + discreteSet.size}")
+        android.util.Log.d("MapGen", "空图集剩余: ${emptySet.size}")
+        android.util.Log.d("MapGen", "========== 建筑群生成完成 ==========")
+
+        return Pair(clusterSet, discreteSet)
+    }
+    
+    /**
+     * 从空图集中移除聚团集和离散建筑集的所有邻居
+     * @param emptySet 空图集
+     * @param clusterSet 聚团集
+     * @param discreteSet 离散建筑集
+     * @param size 地图大小
+     */
+    private fun removeNeighborsFromSets(
+        emptySet: MutableSet<Pair<Int, Int>>,
+        clusterSet: Set<Pair<Int, Int>>,
+        discreteSet: Set<Pair<Int, Int>>,
+        size: Int
+    ) {
+        // 遍历聚团集的所有坐标点的邻居
+        for (cell in clusterSet) {
+            val neighbors = getNeighborCoords(cell.first, cell.second, size)
+            emptySet.removeAll(neighbors)
+        }
+        // 遍历离散建筑集的所有坐标点的邻居
+        for (cell in discreteSet) {
+            val neighbors = getNeighborCoords(cell.first, cell.second, size)
+            emptySet.removeAll(neighbors)
+        }
+    }
+    
+    /**
+     * 计算聚团数量（从格子集合中识别独立的聚团）
+     */
+    private fun countClusters(clusterSet: Set<Pair<Int, Int>>): Int {
+        if (clusterSet.isEmpty()) return 0
+        
+        val visited = mutableSetOf<Pair<Int, Int>>()
+        var clusterCount = 0
+        
+        for (pos in clusterSet) {
+            if (pos in visited) continue
+            
+            // BFS找聚团
+            val queue = ArrayDeque<Pair<Int, Int>>()
+            queue.add(pos)
+            
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                if (current in visited) continue
+                if (current !in clusterSet) continue
+                
+                visited.add(current)
+                
+                // 获取邻居
+                for (neighbor in getNeighborCoords(current.first, current.second, 100)) {
+                    if (neighbor in clusterSet && neighbor !in visited) {
+                        queue.add(neighbor)
+                    }
+                }
+            }
+            
+            clusterCount++
+        }
+        
+        return clusterCount
+    }
+
+    /**
+     * 扩展一个位置为2-3格的聚团
+     * @param center 中心位置
+     * @param clusterSize 聚团大小（2-3）
+     * @param size 地图大小
+     * @param occupied 已被占用的格子集合（会排除这些格子）
+     * @param random 随机数生成器
+     * @return 聚团包含的格子集合
+     */
+    private fun expandToCluster(
+        center: Pair<Int, Int>,
+        clusterSize: Int,
+        size: Int,
+        occupied: Set<Pair<Int, Int>>,
+        random: Random
+    ): MutableList<Pair<Int, Int>> {
+        val cluster = mutableListOf(center)
+        val clusterSet = mutableSetOf(center)  // 用于快速查找
+
+        // 获取所有相邻格子（排除已占用的）
+        val neighbors = getNeighborCoords(center.first, center.second, size)
+            .filter { it !in occupied }
+
+        // 随机打乱邻居顺序
+        val shuffledNeighbors = neighbors.shuffled(random)
+
+        // 添加相邻格子直到达到目标大小
+        for (neighbor in shuffledNeighbors) {
+            if (cluster.size >= clusterSize) break
+            if (neighbor !in clusterSet && neighbor !in occupied) {
+                cluster.add(neighbor)
+                clusterSet.add(neighbor)
+            }
+        }
+
+        // 如果邻居不够，尝试添加相邻格子的邻居（距离2）
+        if (cluster.size < clusterSize) {
+            for (neighbor in shuffledNeighbors) {
+                if (cluster.size >= clusterSize) break
+                val secondNeighbors = getNeighborCoords(neighbor.first, neighbor.second, size)
+                    .filter { it !in occupied && it !in clusterSet }
+                for (second in secondNeighbors) {
+                    if (cluster.size >= clusterSize) break
+                    if (hexDistance(second, center) <= 2) {
+                        cluster.add(second)
+                        clusterSet.add(second)
+                    }
                 }
             }
         }
 
-        // ========== 2. 在聚团中心生成建筑群 ==========
-        val selectedUrbans = mutableSetOf<Pair<Int, Int>>()
-        for (center in clusterCenters) {
-            selectedUrbans.add(center)
+        // 确保至少2格（如果可用邻居足够）
+        if (cluster.size < 2 && shuffledNeighbors.isNotEmpty()) {
+            cluster.add(shuffledNeighbors[0])
         }
 
-        // ========== 3. 生成离散建筑群格子 ==========
-        val remainingCount = effectiveUrbanCount - selectedUrbans.size
-        
-        if (remainingCount > 0) {
-            // 收集可用的离散格子（排除已有建筑群和聚团中心附近）
-            val occupied = selectedUrbans.toMutableSet()
-            val candidates = allCells.filter { cell ->
-                !occupied.contains(cell) && 
-                clusterCenters.none { hexDistance(cell, it) < 2.5 }
-            }.toMutableList()  // 转换为 MutableList
-            
-            // 随机选择离散格子
-            candidates.shuffle(random)
-            for (i in 0 until minOf(remainingCount, candidates.size)) {
-                selectedUrbans.add(candidates[i])
-            }
-        }
-
-        return selectedUrbans
+        return cluster
     }
 
     /**
@@ -788,10 +982,16 @@ class ComponentDebugActivity : AppCompatActivity() {
      * 2. 离散建筑群（不与其他建筑群格子相邻）：6条边防御工事统一为"栅栏"或"土墙"，比例2:1
      * 3. 聚团建筑群：6条边防御工事统一为"石墙"
      * 4. 聚团内相邻格子之间的边：防御工事改为"无"
+     *
+     * @param map 地图
+     * @param urbanCells 所有建筑群格子
+     * @param clusterSet 聚团格子集合（来自算法生成）
+     * @param random 随机数生成器
      */
     private fun assignUrbanFortifications(
         map: DebugHexMap,
         urbanCells: Set<Pair<Int, Int>>,
+        clusterSet: Set<Pair<Int, Int>>,
         random: Random
     ) {
         // 第一步：重置所有格子的防御工事为NONE
@@ -803,62 +1003,16 @@ class ComponentDebugActivity : AppCompatActivity() {
             }
         }
 
-        // 第二步：识别所有建筑群聚团（通过BFS）
-        val visited = mutableSetOf<Pair<Int, Int>>()
-        val clusters = mutableListOf<List<Pair<Int, Int>>>()
+        // 离散建筑群格子 = 所有建筑群 - 聚团格子
+        val discreteCells = urbanCells - clusterSet
 
-        android.util.Log.d("MapGen", "开始BFS识别聚团，urbanCells: $urbanCells")
+        android.util.Log.d("MapGen", "聚团格子数: ${clusterSet.size}, 离散格子数: ${discreteCells.size}")
 
-        for (cell in urbanCells) {
-            if (cell in visited) continue
-
-            val cluster = mutableListOf<Pair<Int, Int>>()
-            val queue = ArrayDeque<Pair<Int, Int>>()
-            queue.add(cell)
-
-            while (queue.isNotEmpty()) {
-                val current = queue.removeFirst()
-                if (current in visited) continue
-
-                visited.add(current)
-                cluster.add(current)
-
-                // 查找相邻的建筑群格子
-                for ((nx, ny) in map.getAllNeighborCoords(current.first, current.second)) {
-                    val neighbor = Pair(nx, ny)
-                    if (neighbor in urbanCells && neighbor !in visited) {
-                        queue.add(neighbor)
-                    }
-                }
-            }
-
-            if (cluster.isNotEmpty()) {
-                clusters.add(cluster)
-                android.util.Log.d("MapGen", "发现聚团: $cluster")
-            }
-        }
-
-        android.util.Log.d("MapGen", "BFS识别完成，共 ${clusters.size} 个聚团")
-
-        // 构建聚团ID映射：格子坐标 -> 聚团索引
-        val clusterIdMap = mutableMapOf<Pair<Int, Int>, Int>()
-        clusters.forEachIndexed { index, cluster ->
-            cluster.forEach { pos -> clusterIdMap[pos] = index }
-        }
-
-        // 第三步：收集离散格子（1格聚团）
-        val discreteCells = mutableListOf<Pair<Int, Int>>()
-        for (cluster in clusters) {
-            if (cluster.size == 1) {
-                discreteCells.add(cluster[0])
-            }
-        }
-
-        // 第四步：为离散建筑群设置栅栏/土墙（2:1比例，栅栏2份，土墙1份）
-        // 使用 round() 四舍五入确保比例准确
-        val totalDiscrete = discreteCells.size
+        // 第二步：为离散建筑群设置栅栏/土墙（2:1比例，栅栏2份，土墙1份）
+        val discreteList = discreteCells.toList()
+        val totalDiscrete = discreteList.size
         val fenceCount = kotlin.math.round(totalDiscrete * 2.0 / 3.0).toInt()
-        val shuffledDiscretes = discreteCells.shuffled(random)
+        val shuffledDiscretes = discreteList.shuffled(random)
 
         shuffledDiscretes.forEachIndexed { index, (x, y) ->
             val fortType = if (index < fenceCount) FortType.FENCE else FortType.EARTHWALL
@@ -867,33 +1021,25 @@ class ComponentDebugActivity : AppCompatActivity() {
             }
         }
 
-        // 第五步：为聚团建筑群设置石墙
-        for (cluster in clusters) {
-            if (cluster.size > 1) {
-                for (cell in cluster) {
-                    val (x, y) = cell
-                    for (dir in 0..5) {
-                        map.setFortification(x, y, dir, FortType.STONEWALL)
-                    }
-                }
+        // 第三步：为聚团建筑群设置石墙
+        for (cell in clusterSet) {
+            val (x, y) = cell
+            for (dir in 0..5) {
+                map.setFortification(x, y, dir, FortType.STONEWALL)
             }
         }
 
-        // 第六步：擦除聚团内相邻格子之间的防御工事
-        for (cluster in clusters) {
-            if (cluster.size > 1) {
-                for (cell in cluster) {
-                    val (x, y) = cell
-                    for (dir in 0..5) {
-                        val (nx, ny) = map.getNeighborCoord(x, y, dir)
-                        if (nx !in 0 until map.width || ny !in 0 until map.height) continue
+        // 第四步：擦除聚团内相邻格子之间的防御工事
+        for (cell in clusterSet) {
+            val (x, y) = cell
+            for (dir in 0..5) {
+                val (nx, ny) = map.getNeighborCoord(x, y, dir)
+                if (nx !in 0 until map.width || ny !in 0 until map.height) continue
 
-                        val neighborPos = Pair(nx, ny)
-                        // 如果邻居在同一个聚团内，清除防御工事
-                        if (clusterIdMap[neighborPos] == clusterIdMap[Pair(x, y)]) {
-                            map.setFortification(x, y, dir, FortType.NONE)
-                        }
-                    }
+                val neighborPos = Pair(nx, ny)
+                // 如果邻居也在聚团内，清除防御工事
+                if (neighborPos in clusterSet) {
+                    map.setFortification(x, y, dir, FortType.NONE)
                 }
             }
         }
@@ -919,55 +1065,54 @@ class ComponentDebugActivity : AppCompatActivity() {
         val terrainCounts = mutableMapOf<TerrainType, Int>()
         TerrainType.entries.forEach { terrainCounts[it] = 0 }
 
-        // 目标比例：森林12%, 山地20%, 高山8%, 建筑群8%, 平原52%
-        // 高山必须与山地相连才能存在
-        val targetForest = 0.12f
-        val targetHill = 0.20f
-        val targetMountain = 0.08f
-        val targetUrban = 0.08f
-
-        // 1. 生成建筑群位置
-        val urbanCount = (totalCells * targetUrban).toInt().coerceAtLeast(2)  // 至少2个
-        val urbanCells = generateUrbanCells(size, urbanCount, random)
+        // ========== 步骤6-7：生成建筑群（聚团 + 离散格子） ==========
+        // 按照算法：聚团m*8% + 离散建筑群m*8%
+        val (clusterSet, discreteSet) = generateUrbanCells(size, random)
+        val allUrbanCells = clusterSet + discreteSet
+        val urbanCount = allUrbanCells.size
 
         // 调试日志
-        android.util.Log.d("MapGen", "生成建筑群格子数: ${urbanCells.size}")
-        android.util.Log.d("MapGen", "建筑群位置: $urbanCells")
+        android.util.Log.d("MapGen", "聚团格子数: ${clusterSet.size}")
+        android.util.Log.d("MapGen", "离散建筑群格子数: ${discreteSet.size}")
+        android.util.Log.d("MapGen", "总建筑群格子数: $urbanCount")
 
-        // 2. 计算非建筑群格子的目标数量和比例
+        // ========== 步骤8：分配地形（60%平原，15%山地，10%森林，5%高山） ==========
+        // 高山必须与山地相邻
         val nonUrbanCount = totalCells - urbanCount
-        // 非建筑群格子中：平原52%, 森林12%, 山地20%, 高山8%（按比例调整）
-        val nonUrbanPlainRatio = 0.52f / (0.52f + 0.12f + 0.20f + 0.08f)
-        val nonUrbanForestRatio = 0.12f / (0.52f + 0.12f + 0.20f + 0.08f)
-        val nonUrbanHillRatio = 0.20f / (0.52f + 0.12f + 0.20f + 0.08f)
-        val nonUrbanMountainRatio = 0.08f / (0.52f + 0.12f + 0.20f + 0.08f)
+        val plainRatio = 0.60f
+        val hillRatio = 0.15f
+        val forestRatio = 0.10f
+        val mountainRatio = 0.05f
 
-        val hillCount = (nonUrbanCount * nonUrbanHillRatio).toInt().coerceAtLeast(1)
-        val forestCount = (nonUrbanCount * nonUrbanForestRatio).toInt().coerceAtLeast(1)
-        val mountainCount = (nonUrbanCount * nonUrbanMountainRatio).toInt().coerceAtLeast(1)
-        val plainCount = (nonUrbanCount * nonUrbanPlainRatio).toInt().coerceAtLeast(1)
+        val hillCount = (nonUrbanCount * hillRatio).toInt().coerceAtLeast(1)
+        val forestCount = (nonUrbanCount * forestRatio).toInt().coerceAtLeast(1)
+        val mountainCount = (nonUrbanCount * mountainRatio).toInt().coerceAtLeast(1)
+        val plainCount = nonUrbanCount - hillCount - forestCount - mountainCount
 
-        // 创建加权列表（不含建筑群和高山，先生成山地）
+        android.util.Log.d("MapGen", "地形分配: 平原=$plainCount, 山地=$hillCount, 森林=$forestCount, 高山=$mountainCount")
+
+        // 创建加权列表（先生成山地，高山后面再处理）
         val weightedTerrains = mutableListOf<TerrainType>()
         repeat(hillCount) { weightedTerrains.add(TerrainType.HILL) }
         repeat(forestCount) { weightedTerrains.add(TerrainType.FOREST) }
         repeat(plainCount) { weightedTerrains.add(TerrainType.PLAIN) }
+        weightedTerrains.shuffle(random)
 
         // 分配地形到每个格子（先不分配高山）
         for (x in 0 until size) {
             for (y in 0 until size) {
                 val pos = Pair(x, y)
-                val terrain = if (urbanCells.contains(pos)) {
+                val terrain = if (allUrbanCells.contains(pos)) {
                     TerrainType.URBAN
                 } else {
-                    weightedTerrains.randomOrNull(random) ?: TerrainType.PLAIN
+                    if (weightedTerrains.isNotEmpty()) weightedTerrains.removeAt(0) else TerrainType.PLAIN
                 }
                 map.cells[x][y].terrain = terrain
                 terrainCounts[terrain] = terrainCounts[terrain]!! + 1
             }
         }
 
-        // 高山必须在山地旁边生成：在所有山地格子周围放置高山
+        // 高山必须在山地旁边生成
         val hillCells = mutableListOf<Pair<Int, Int>>()
         for (x in 0 until size) {
             for (y in 0 until size) {
@@ -995,14 +1140,14 @@ class ComponentDebugActivity : AppCompatActivity() {
                     mountainsPlaced++
                     terrainCounts[TerrainType.MOUNTAIN] = terrainCounts[TerrainType.MOUNTAIN]!! + 1
                 } else {
-                    // 如果没有可用邻居，从其他山地格子周围找
+                    // 如果没有可用邻居，尝试其他山地
                     val otherHills = hillCells.filter { it != hillCell }
                     if (otherHills.isNotEmpty()) {
                         val otherHill = otherHills.random(random)
                         val otherNeighbors = map.getAllNeighborCoords(otherHill.first, otherHill.second).filter { (nx, ny) ->
                             nx in 0 until size && ny in 0 until size && map.cells[nx][ny].terrain == TerrainType.PLAIN
                         }
-                        if (otherNeighbors.isNotEmpty()) {
+                        if (otherHills.isNotEmpty()) {
                             val (mx, my) = otherNeighbors.random(random)
                             map.cells[mx][my].terrain = TerrainType.MOUNTAIN
                             mountainsPlaced++
@@ -1013,6 +1158,8 @@ class ComponentDebugActivity : AppCompatActivity() {
             }
         }
 
+        android.util.Log.d("MapGen", "实际放置高山数: $mountainsPlaced")
+
 
 
         // 3. 防御工事（按规则生成）
@@ -1021,7 +1168,7 @@ class ComponentDebugActivity : AppCompatActivity() {
         // - 离散建筑群：6条边统一为"栅栏"或"土墙"，比例2:1
         // - 聚团建筑群：6条边统一为"石墙"
         // - 聚团内相邻格子之间：防御工事改为"无"
-        assignUrbanFortifications(map, urbanCells, random)
+        assignUrbanFortifications(map, allUrbanCells, clusterSet, random)
 
         // 4. 生成河流
         val riverCountStr = riverCountInput.text.toString()
