@@ -367,33 +367,29 @@ class HexMapView @JvmOverloads constructor(
     }
 
     /**
-     * 绘制防御工事小叉连线
+     * 绘制防御工事小叉标记
      *
      * 设计说明（开发方案2.3节）：
-     * - 栅栏：褐色小叉连线
-     * - 土墙：灰色小叉连线
-     * - 石墙：白色小叉连线
-     * - 小叉样式：在主线上绘制X形短线
+     * - 栅栏：褐色小叉
+     * - 土墙：灰色小叉
+     * - 石墙：白色小叉
+     * - 小叉样式：沿边界线分布的X形标记（无主线）
      */
     private fun drawFortificationLines(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float,
                                         direction: Int, fortType: FortType) {
-        val cx = (x1 + x2) / 2
-        val cy = (y1 + y2) / 2
-
-        // 主线长度
+        // 边长度
         val dx = x2 - x1
         val dy = y2 - y1
         val len = sqrt(dx * dx + dy * dy)
 
-        // 小叉的间距和长度
-        val crossSpacing = len / 5
-        val crossLen = len / 8
+        // 小叉的间距和长度（适当增大以保持清晰可见）
+        val crossLen = len / 6
 
         // 计算垂直方向
         val nx = -dy / len * crossLen
         val ny = dx / len * crossLen
 
-        // 绘制主线上的小叉（3-5个）
+        // 绘制小叉标记的数量（3-5个）
         val numCross = when (fortType) {
             FortType.FENCE -> 3  // 栅栏少一些
             FortType.EARTHWALL -> 4
@@ -406,7 +402,7 @@ class HexMapView @JvmOverloads constructor(
             val mx = x1 + dx * t
             val my = y1 + dy * t
 
-            // 绘制完整的小叉（X形：两条交叉的短线）
+            // 绘制小叉（X形：两条交叉的短线，无主线）
             canvas.drawLine(mx - nx, my - ny, mx + nx, my + ny, fortPaint)
             canvas.drawLine(mx - nx, my + ny, mx + nx, my - ny, fortPaint)
         }
