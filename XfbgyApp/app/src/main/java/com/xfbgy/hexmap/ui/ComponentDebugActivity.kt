@@ -17,8 +17,10 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.xfbgy.hexmap.data.DebugHexMap
 import com.xfbgy.hexmap.data.FortType
+import com.xfbgy.hexmap.data.ResourcePointType
 import com.xfbgy.hexmap.data.TerrainType
 import com.xfbgy.hexmap.generation.DebugRiverGenerator
+import com.xfbgy.hexmap.generation.ResourcePointScanner
 import kotlin.math.sqrt
 import kotlin.random.Random
 
@@ -163,6 +165,109 @@ class ComponentDebugActivity : AppCompatActivity() {
         fortPreviewLayout.addView(stonewallPreviewView)
 
         rootLayout.addView(fortPreviewLayout)
+
+        // ========== Section 3.5: 格子内部UI预览 ==========
+        rootLayout.addView(createSectionTitle("3.5 基础组件 - 格子内部UI"))
+        rootLayout.addView(createSectionSubtitle("资源点(图标) + 预留单位空间(虚线圆)"))
+
+        // 3种布局预览
+        val cellUIPreviewLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // 1个部分：只有资源点
+        val cellUI1 = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFF9E9E9E.toInt() // 建筑群色
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.VILLAGE)
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        cellUIPreviewLayout.addView(cellUI1)
+
+        // 2个部分：资源点 + 预留我方
+        val cellUI2 = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFF9E9E9E.toInt()
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.TOWN)
+            showFriendlyUnitSpace = true
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        cellUIPreviewLayout.addView(cellUI2)
+
+        // 3个部分：资源点 + 预留我方 + 预留敌方
+        val cellUI3 = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFF9E9E9E.toInt()
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.CITY)
+            showFriendlyUnitSpace = true
+            showEnemyUnitSpace = true
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        cellUIPreviewLayout.addView(cellUI3)
+
+        rootLayout.addView(cellUIPreviewLayout)
+
+        // CellUI 类型说明
+        val cellUITypeLabel = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF80FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(8))
+            text = "1部分(居中) | 2部分(左右) | 3部分(三角: 资源点顶部, 我方左下, 敌方右下)"
+        }
+        rootLayout.addView(cellUITypeLabel)
+
+        // 马场单独展示
+        val ranchPreviewLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val cellUIRanch = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFFA8D5A2.toInt() // 平原色
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.RANCH)
+            showFriendlyUnitSpace = true
+            showEnemyUnitSpace = true
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        ranchPreviewLayout.addView(cellUIRanch)
+        val cellUIVillageFull = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFF9E9E9E.toInt()
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.VILLAGE)
+            showFriendlyUnitSpace = true
+            showEnemyUnitSpace = true
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        ranchPreviewLayout.addView(cellUIVillageFull)
+        val cellUITownFull = HexCellDebugView(this).apply {
+            hexRadius = 80f
+            fillColor = 0xFF9E9E9E.toInt()
+            resourcePoint = com.xfbgy.hexmap.data.ResourcePoint(com.xfbgy.hexmap.data.ResourcePointType.TOWN)
+            showFriendlyUnitSpace = true
+            showEnemyUnitSpace = true
+            layoutParams = LinearLayout.LayoutParams(0, dpToPx(240), 1f)
+        }
+        ranchPreviewLayout.addView(cellUITownFull)
+        rootLayout.addView(ranchPreviewLayout)
+
+        val cellUIRanchLabel = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF80FFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dpToPx(8))
+            text = "马场(平原) | 村庄(栅栏) | 城镇(土墙)  — 均含3部分三角布局"
+        }
+        rootLayout.addView(cellUIRanchLabel)
 
         // ========== Section 4: 交互控制 ==========
         rootLayout.addView(createSectionTitle("4. 交互控制"))
@@ -548,6 +653,12 @@ class ComponentDebugActivity : AppCompatActivity() {
         val cell = m.cells[x][y]
         val sb = StringBuilder()
         sb.append("坐标: ($x, $y)  |  地形: ${cell.terrain.chineseName}")
+
+        // 资源点信息
+        val rp = cell.resourcePoint
+        if (rp != null) {
+            sb.append("  |  ${rp.getDescription()}")
+        }
         sb.append("\n")
 
         val dirNames = arrayOf("1-顶边", "2-右上", "3-右下", "4-底边", "5-左下", "6-左上")
@@ -1181,7 +1292,11 @@ class ComponentDebugActivity : AppCompatActivity() {
         val riverGenerator = DebugRiverGenerator()
         riverGenerator.generateMultiple(map, riverCount)
 
-        // 4. 显示地图
+        // 5. 识别资源点（村庄/城镇/都市/马场）
+        val resourceScanner = ResourcePointScanner()
+        resourceScanner.scanMap(map, clusterSet)
+
+        // 6. 显示地图
         currentMap = map
         mapGridView.map = map
 
@@ -1223,7 +1338,18 @@ class ComponentDebugActivity : AppCompatActivity() {
             "${terrain.chineseName}: $count($percent%)"
         }
 
-        mapInfoText.text = "${size}×${size}地图(${totalCells}格) | $terrainStats | 河流${riverCount}条(${riverEdgeCount}边) | 工事${fortCount}边"
+        // 资源点统计
+        val resourceStats = ResourcePointType.entries.map { type ->
+            var count = 0
+            for (rx in 0 until size) {
+                for (ry in 0 until size) {
+                    if (map.cells[rx][ry].resourcePoint?.type == type) count++
+                }
+            }
+            "${type.chineseName}:$count"
+        }.joinToString(" ")
+
+        mapInfoText.text = "${size}×${size}地图(${totalCells}格) | $terrainStats | 河流${riverCount}条(${riverEdgeCount}边) | 工事${fortCount}边 | 资源[$resourceStats]"
     }
 
     /**

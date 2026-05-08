@@ -26,7 +26,8 @@ data class HexCell(
     var terrain: TerrainType,
     var units: MutableList<GameUnit> = mutableListOf(),
     var movementCost: Int = 0,
-    var zoc: Int = 0b000
+    var zoc: Int = 0b000,
+    var resourcePoint: ResourcePoint? = null
 ) {
     /**
      * 边缘数组（顺时针编号 0-5）

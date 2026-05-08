@@ -13,23 +13,22 @@ import android.view.View
 import com.xfbgy.hexmap.data.DebugHexMap
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.HexMapColors
-import com.xfbgy.hexmap.data.ResourcePointType
+import com.xfbgy.hexmap.data.ResourcePoint
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * 六角格地图网格View（flat-top六边形）
+ * 游戏页面专用六角格地图View
  *
- * 绘制 n*n 的六角格地图，包含：
- * - 格子填充色（地形颜色）
- * - 边界线
- * - 河流（蓝色3dp线，在边内侧）
- * - 防御工事（小叉连线，在河流更内侧）
- * - 点击选中格子，高亮格子本身
- * - 双指缩放、拖拽平移
+ * 与HexMapGridView的区别：
+ * - 不绘制格子边框
+ * - 不绘制敌我双方阵营预留单位UI
+ * - 保留资源点图标显示
+ * - 保留点击选中逻辑
+ * - 支持自由拖动和缩放
  */
-class HexMapGridView @JvmOverloads constructor(
+class GameMapGridView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
@@ -67,8 +66,8 @@ class HexMapGridView @JvmOverloads constructor(
     private var scaleFactor = 1f
     private var panX = 0f
     private var panY = 0f
-    private val minScale = 0.3f
-    private val maxScale = 5f
+    private val minScale = 0.2f
+    private val maxScale = 8f
 
     // 手势检测
     private val scaleDetector: ScaleGestureDetector
@@ -79,15 +78,17 @@ class HexMapGridView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
 
-    private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1.5f * resources.displayMetrics.density
-        color = parseColor(HexMapColors.BORDER)
-    }
+    // 无边框 - 不创建borderPaint
 
     private val selectedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         color = 0x40FF9800.toInt()  // 半透明橙色
+    }
+
+    private val selectedBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * resources.displayMetrics.density
+        color = 0xFFFF9800.toInt()  // 橙色选中边框
     }
 
     private val riverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -103,7 +104,7 @@ class HexMapGridView @JvmOverloads constructor(
         strokeCap = Paint.Cap.ROUND
     }
 
-    // ========== CellUI 画笔（资源点+预留单位） ==========
+    // ========== CellUI 画笔（仅资源点，无阵营UI） ==========
     private val resourceIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
@@ -111,16 +112,6 @@ class HexMapGridView @JvmOverloads constructor(
     private val resourceTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
-    }
-
-    private val unitReservedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1.5f * resources.displayMetrics.density
-    }
-
-    private val unitReservedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-        alpha = 40  // 半透明
     }
 
     // 内边距
@@ -187,7 +178,6 @@ class HexMapGridView @JvmOverloads constructor(
     fun centerMap() {
         val m = map ?: return
         val R = hexRadius
-        // flat-top: 宽=(width-1)*1.5R + 2R, 高=height*√3R + √3R/2
         val contentW = (m.width - 1) * R * 1.5f + R * 2 + padding * 2
         val contentH = m.height * R * sqrt(3f) + R * sqrt(3f) / 2 + padding * 2
 
@@ -223,7 +213,6 @@ class HexMapGridView @JvmOverloads constructor(
     // ========== 点击选中 ==========
     private fun handleTap(viewX: Float, viewY: Float) {
         val m = map ?: return
-        // 视图坐标 → 地图本地坐标（与onDraw中的canvas变换对应）
         val localX = (viewX - panX) / scaleFactor - padding
         val localY = (viewY - panY) / scaleFactor - padding - hexRadius * sqrt(3f) / 2
 
@@ -239,9 +228,6 @@ class HexMapGridView @JvmOverloads constructor(
         invalidate()
     }
 
-    /**
-     * 像素坐标 → 六角格坐标（flat-top, odd-q布局）
-     */
     private fun pixelToHex(px: Float, py: Float, map: DebugHexMap): Pair<Int, Int>? {
         val R = hexRadius
         val xEst = Math.round(px / (R * 1.5f))
@@ -294,7 +280,6 @@ class HexMapGridView @JvmOverloads constructor(
         canvas.save()
         canvas.translate(panX, panY)
         canvas.scale(scaleFactor, scaleFactor)
-        // flat-top: 顶部边中点在中心上方 R*√3/2 处
         canvas.translate(padding, padding + R * sqrt(3f) / 2)
 
         for (y in 0 until m.height) {
@@ -307,13 +292,13 @@ class HexMapGridView @JvmOverloads constructor(
     }
 
     /**
-     * 绘制单个格子
+     * 绘制单个格子（无边框，无阵营UI）
      */
     private fun drawCell(canvas: Canvas, map: DebugHexMap, x: Int, y: Int, R: Float) {
         val (cx, cy) = map.hexToPixel(x, y, R)
         val isSelected = (x == selectedCellX && y == selectedCellY)
 
-        // 计算顶点（flat-top：起始角-120°，顺时针）
+        // 计算顶点
         val vertices = Array(6) { i ->
             val angle = Math.PI / 3.0 * i - Math.PI / 2.0 - Math.PI / 6.0
             PointF(
@@ -335,29 +320,29 @@ class HexMapGridView @JvmOverloads constructor(
         fillPaint.color = parseColor(HexMapColors.getTerrainColor(cell.terrain))
         canvas.drawPath(hexPath, fillPaint)
 
-        // Layer 0.5: 选中格子半透明叠加（只高亮格子本身，不高亮边）
+        // Layer 0.5: 选中格子高亮（橙色半透明填充 + 橙色边框）
         if (isSelected) {
             canvas.drawPath(hexPath, selectedFillPaint)
+            canvas.drawPath(hexPath, selectedBorderPaint)
         }
 
-        // Layer 1: 边界线
-        canvas.drawPath(hexPath, borderPaint)
+        // Layer 1: 不画边框（游戏页面无边框）
 
-        // Layer 1.5: 格子内部UI（资源点 + 预留单位空间）
+        // Layer 1.5: 格子内部UI（仅资源点，无阵营UI）
         drawCellUI(canvas, cell, cx, cy, R)
 
-        // Layer 2 & 3: 逐边绘制
+        // Layer 2 & 3: 逐边绘制河流和工事
         for (dir in 0 until 6) {
             val edge = map.edges[x][y][dir]
             val v1 = vertices[dir]
             val v2 = vertices[(dir + 1) % 6]
 
-            // 河流 - 直接绘制在边上
+            // 河流
             if (edge.hasRiver) {
                 canvas.drawLine(v1.x, v1.y, v2.x, v2.y, riverPaint)
             }
 
-            // 防御工事 - 各格子独立绘制
+            // 防御工事
             if (edge.fortification != FortType.NONE) {
                 val fortOffset = if (edge.hasRiver) {
                     (3f / 2f + 2f) * resources.displayMetrics.density
@@ -382,105 +367,26 @@ class HexMapGridView @JvmOverloads constructor(
     }
 
     /**
-     * 绘制格子内部UI
-     *
-     * UI类型：每个六边形格子内部最多包含三个部分：
-     * 1. 资源点（图标+文字）
-     * 2. 预留我方单位UI（虚线圆圈）
-     * 3. 预留敌方单位UI（虚线圆圈）
-     *
-     * UI分布：
-     * - 3个部分：正三角形分布，资源点在顶部，两个圆圈在两个底角
-     * - 2个部分：居中左右展示
-     * - 1个部分：居中展示
+     * 绘制格子内部UI（仅资源点，无阵营预留单位）
      */
     private fun drawCellUI(canvas: Canvas, cell: com.xfbgy.hexmap.data.HexCell, cx: Float, cy: Float, R: Float) {
-        val rp = cell.resourcePoint
-        val hasResource = rp != null
-        val hasFriendly = cell.units.any { it.faction == 1 }  // 简化：阵营1为我方
-        val hasEnemy = cell.units.any { it.faction != 1 }     // 简化：非阵营1为敌方
+        val rp = cell.resourcePoint ?: return
 
-        // 计算各部分状态
-        val parts = mutableListOf<CellUIPart>()
-        if (hasResource) {
-            parts.add(CellUIPart.RESOURCE)
-        }
-        if (hasFriendly || rp != null) {  // 有资源点或我方单位时预留空间
-            parts.add(CellUIPart.FRIENDLY_UNIT)
-        }
-        if (hasEnemy || rp != null) {     // 有资源点或敌方单位时预留空间
-            parts.add(CellUIPart.ENEMY_UNIT)
-        }
-
-        if (parts.isEmpty()) return
-
+        // 只有资源点，居中展示
         val density = resources.displayMetrics.density
-        val iconRadius = R * 0.22f   // 资源点图标半径
-        val circleRadius = R * 0.16f // 预留单位圆圈半径
+        val iconRadius = R * 0.22f
 
-        when (parts.size) {
-            1 -> {
-                // 居中展示
-                val part = parts[0]
-                drawUIPart(canvas, part, cx, cy, iconRadius, circleRadius, rp, density)
-            }
-            2 -> {
-                // 居中左右展示
-                val spacing = R * 0.28f
-                drawUIPart(canvas, parts[0], cx - spacing, cy, iconRadius, circleRadius, rp, density)
-                drawUIPart(canvas, parts[1], cx + spacing, cy, iconRadius, circleRadius, rp, density)
-            }
-            3 -> {
-                // 正三角形分布：资源点在顶部，两个圆圈在两个底角
-                val vSpacing = R * 0.30f  // 垂直间距
-                val hSpacing = R * 0.25f  // 水平间距
-
-                // 资源点在顶部
-                drawUIPart(canvas, CellUIPart.RESOURCE, cx, cy - vSpacing, iconRadius, circleRadius, rp, density)
-                // 我方单位在左下
-                drawUIPart(canvas, CellUIPart.FRIENDLY_UNIT, cx - hSpacing, cy + vSpacing * 0.6f, iconRadius, circleRadius, rp, density)
-                // 敌方单位在右下
-                drawUIPart(canvas, CellUIPart.ENEMY_UNIT, cx + hSpacing, cy + vSpacing * 0.6f, iconRadius, circleRadius, rp, density)
-            }
-        }
-    }
-
-    /**
-     * 绘制单个UI部分
-     */
-    private fun drawUIPart(
-        canvas: Canvas,
-        part: CellUIPart,
-        x: Float, y: Float,
-        iconRadius: Float,
-        circleRadius: Float,
-        rp: com.xfbgy.hexmap.data.ResourcePoint?,
-        density: Float
-    ) {
-        when (part) {
-            CellUIPart.RESOURCE -> {
-                if (rp != null) {
-                    drawResourceIcon(canvas, x, y, iconRadius, rp, density)
-                }
-            }
-            CellUIPart.FRIENDLY_UNIT -> {
-                drawUnitReservedCircle(canvas, x, y, circleRadius, 0xFF4CAF50.toInt())  // 绿色-我方
-            }
-            CellUIPart.ENEMY_UNIT -> {
-                drawUnitReservedCircle(canvas, x, y, circleRadius, 0xFFF44336.toInt())  // 红色-敌方
-            }
-        }
+        drawResourceIcon(canvas, cx, cy, iconRadius, rp, density)
     }
 
     /**
      * 绘制资源点图标
-     * 圆形背景 + 类型缩写文字
      */
     private fun drawResourceIcon(
         canvas: Canvas,
         x: Float, y: Float,
         radius: Float,
-        rp: com.xfbgy.hexmap.data.ResourcePoint,
+        rp: ResourcePoint,
         density: Float
     ) {
         // 背景圆
@@ -502,45 +408,9 @@ class HexMapGridView @JvmOverloads constructor(
         val textSize = radius * 1.1f
         resourceTextPaint.textSize = textSize
         resourceTextPaint.color = 0xFFFFFFFF.toInt()
-        resourceTextPaint.alpha = 255
-
-        // 压制状态用暗色叠加
-        if (rp.isSuppressed) {
-            resourceTextPaint.alpha = 120
-        }
+        resourceTextPaint.alpha = if (rp.isSuppressed) 120 else 255
 
         canvas.drawText(rp.type.iconLabel, x, y + textSize / 3, resourceTextPaint)
-    }
-
-    /**
-     * 绘制预留单位圆圈
-     * 虚线圆圈 + 半透明填充
-     */
-    private fun drawUnitReservedCircle(
-        canvas: Canvas,
-        x: Float, y: Float,
-        radius: Float,
-        color: Int
-    ) {
-        // 半透明填充
-        unitReservedFillPaint.color = color
-        unitReservedFillPaint.alpha = 30
-        canvas.drawCircle(x, y, radius, unitReservedFillPaint)
-
-        // 虚线边框（使用PathEffect模拟虚线）
-        unitReservedPaint.color = color
-        unitReservedPaint.alpha = 100
-        unitReservedPaint.pathEffect = android.graphics.DashPathEffect(
-            floatArrayOf(radius * 0.3f, radius * 0.3f), 0f
-        )
-        canvas.drawCircle(x, y, radius, unitReservedPaint)
-        unitReservedPaint.pathEffect = null
-    }
-
-    private enum class CellUIPart {
-        RESOURCE,       // 资源点
-        FRIENDLY_UNIT,  // 预留我方单位
-        ENEMY_UNIT      // 预留敌方单位
     }
 
     private fun drawFortificationLines(canvas: Canvas, x1: Float, y1: Float, x2: Float, y2: Float, fortType: FortType) {

@@ -8,6 +8,8 @@ import android.graphics.PointF
 import android.util.AttributeSet
 import android.view.View
 import com.xfbgy.hexmap.data.FortType
+import com.xfbgy.hexmap.data.ResourcePoint
+import com.xfbgy.hexmap.data.ResourcePointType
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -70,6 +72,27 @@ class HexCellDebugView @JvmOverloads constructor(
             invalidate()
         }
 
+    // 资源点（用于CellUI展示）
+    var resourcePoint: ResourcePoint? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // 是否显示预留我方单位空间
+    var showFriendlyUnitSpace: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    // 是否显示预留敌方单位空间
+    var showEnemyUnitSpace: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     // 六角格顶点（以中心为原点）
     private val vertices = Array(6) { PointF() }
 
@@ -109,6 +132,27 @@ class HexCellDebugView @JvmOverloads constructor(
         color = 0x80FFFFFF.toInt()
     }
 
+    // CellUI 画笔
+    private val resourceIconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+
+    private val resourceTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+    }
+
+    private val unitReservedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        strokeCap = Paint.Cap.ROUND
+    }
+
+    private val unitReservedFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        alpha = 40
+    }
+
     init {
         recalculateVertices()
     }
@@ -144,6 +188,9 @@ class HexCellDebugView @JvmOverloads constructor(
 
         // Layer 1: 边界线
         canvas.drawPath(hexPath, borderPaint)
+
+        // Layer 1.5: 格子内部UI（资源点 + 预留单位空间）
+        drawCellUIDebug(canvas, cx, cy)
 
         // Layer 2 & 3: 逐边绘制河流和工事
         for (dir in 0 until 6) {
@@ -279,6 +326,112 @@ class HexCellDebugView @JvmOverloads constructor(
         if (edgeNum in 1..6) {
             edgeForts[edgeNum - 1] = fortType
             invalidate()
+        }
+    }
+
+    /**
+     * 绘制格子内部UI（调试版，尺寸更大更清晰）
+     *
+     * 布局规则：
+     * - 3个部分：正三角形，资源点顶部，预留圆圈两底角
+     * - 2个部分：居中左右展示
+     * - 1个部分：居中展示
+     */
+    private fun drawCellUIDebug(canvas: Canvas, cx: Float, cy: Float) {
+        val rp = resourcePoint
+        val hasResource = rp != null
+        val hasFriendly = showFriendlyUnitSpace
+        val hasEnemy = showEnemyUnitSpace
+
+        val parts = mutableListOf<String>() // "resource", "friendly", "enemy"
+        if (hasResource) parts.add("resource")
+        if (hasFriendly) parts.add("friendly")
+        if (hasEnemy) parts.add("enemy")
+
+        if (parts.isEmpty()) return
+
+        val iconRadius = hexRadius * 0.20f
+        val circleRadius = hexRadius * 0.14f
+
+        when (parts.size) {
+            1 -> {
+                drawUIPartDebug(canvas, parts[0], cx, cy, iconRadius, circleRadius, rp)
+            }
+            2 -> {
+                val spacing = hexRadius * 0.28f
+                drawUIPartDebug(canvas, parts[0], cx - spacing, cy, iconRadius, circleRadius, rp)
+                drawUIPartDebug(canvas, parts[1], cx + spacing, cy, iconRadius, circleRadius, rp)
+            }
+            3 -> {
+                val vSpacing = hexRadius * 0.28f
+                val hSpacing = hexRadius * 0.24f
+                // 资源点在顶部
+                drawUIPartDebug(canvas, "resource", cx, cy - vSpacing, iconRadius, circleRadius, rp)
+                // 我方单位在左下
+                drawUIPartDebug(canvas, "friendly", cx - hSpacing, cy + vSpacing * 0.6f, iconRadius, circleRadius, rp)
+                // 敌方单位在右下
+                drawUIPartDebug(canvas, "enemy", cx + hSpacing, cy + vSpacing * 0.6f, iconRadius, circleRadius, rp)
+            }
+        }
+    }
+
+    private fun drawUIPartDebug(
+        canvas: Canvas,
+        part: String,
+        x: Float, y: Float,
+        iconRadius: Float,
+        circleRadius: Float,
+        rp: ResourcePoint?
+    ) {
+        when (part) {
+            "resource" -> {
+                if (rp != null) {
+                    // 背景
+                    val bgColor = android.graphics.Color.parseColor(rp.type.colorHex)
+                    resourceIconPaint.color = bgColor
+                    resourceIconPaint.alpha = 200
+                    canvas.drawCircle(x, y, iconRadius, resourceIconPaint)
+                    // 边框
+                    resourceIconPaint.style = Paint.Style.STROKE
+                    resourceIconPaint.strokeWidth = 2f
+                    resourceIconPaint.color = 0xFFFFFFFF.toInt()
+                    resourceIconPaint.alpha = 180
+                    canvas.drawCircle(x, y, iconRadius, resourceIconPaint)
+                    resourceIconPaint.style = Paint.Style.FILL
+                    resourceIconPaint.alpha = 255
+                    // 文字
+                    val textSize = iconRadius * 1.1f
+                    resourceTextPaint.textSize = textSize
+                    resourceTextPaint.color = 0xFFFFFFFF.toInt()
+                    canvas.drawText(rp.type.iconLabel, x, y + textSize / 3, resourceTextPaint)
+                }
+            }
+            "friendly" -> {
+                // 绿色虚线圆圈
+                unitReservedFillPaint.color = 0xFF4CAF50.toInt()
+                unitReservedFillPaint.alpha = 30
+                canvas.drawCircle(x, y, circleRadius, unitReservedFillPaint)
+                unitReservedPaint.color = 0xFF4CAF50.toInt()
+                unitReservedPaint.alpha = 120
+                unitReservedPaint.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(circleRadius * 0.3f, circleRadius * 0.3f), 0f
+                )
+                canvas.drawCircle(x, y, circleRadius, unitReservedPaint)
+                unitReservedPaint.pathEffect = null
+            }
+            "enemy" -> {
+                // 红色虚线圆圈
+                unitReservedFillPaint.color = 0xFFF44336.toInt()
+                unitReservedFillPaint.alpha = 30
+                canvas.drawCircle(x, y, circleRadius, unitReservedFillPaint)
+                unitReservedPaint.color = 0xFFF44336.toInt()
+                unitReservedPaint.alpha = 120
+                unitReservedPaint.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(circleRadius * 0.3f, circleRadius * 0.3f), 0f
+                )
+                canvas.drawCircle(x, y, circleRadius, unitReservedPaint)
+                unitReservedPaint.pathEffect = null
+            }
         }
     }
 

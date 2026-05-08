@@ -24,6 +24,10 @@
             android:name="com.xfbgy.hexmap.ui.ComponentDebugActivity"
             android:exported="false"
             android:screenOrientation="portrait"/>
+        <activity
+            android:name="com.xfbgy.hexmap.ui.GameActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"/>
     </application>
 
 </manifest>
