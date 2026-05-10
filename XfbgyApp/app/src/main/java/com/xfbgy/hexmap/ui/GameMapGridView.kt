@@ -14,6 +14,7 @@ import com.xfbgy.hexmap.data.DebugHexMap
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.HexMapColors
 import com.xfbgy.hexmap.data.ResourcePoint
+import com.xfbgy.hexmap.game.TurnManager
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -61,6 +62,9 @@ class GameMapGridView @JvmOverloads constructor(
 
     // 格子选中回调
     var onCellSelected: ((x: Int, y: Int) -> Unit)? = null
+
+    // 回合管理器（用于绘制占领标记）
+    var turnManager: TurnManager? = null
 
     // ========== 缩放 & 平移 ==========
     private var scaleFactor = 1f
@@ -112,6 +116,23 @@ class GameMapGridView @JvmOverloads constructor(
     private val resourceTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         isFakeBoldText = true
+    }
+
+    // ========== 玩家占领标记画笔 ==========
+    private val occupationFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        alpha = 50  // 半透明填充
+    }
+
+    private val occupationBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * resources.displayMetrics.density
+    }
+
+    private val occupationTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+        color = 0xFFFFFFFF.toInt()
     }
 
     // 内边距
@@ -367,16 +388,98 @@ class GameMapGridView @JvmOverloads constructor(
     }
 
     /**
-     * 绘制格子内部UI（仅资源点，无阵营预留单位）
+     * 绘制格子内部UI（资源点 + 玩家占领标记）
      */
     private fun drawCellUI(canvas: Canvas, cell: com.xfbgy.hexmap.data.HexCell, cx: Float, cy: Float, R: Float) {
-        val rp = cell.resourcePoint ?: return
-
-        // 只有资源点，居中展示
+        val rp = cell.resourcePoint
         val density = resources.displayMetrics.density
-        val iconRadius = R * 0.22f
 
-        drawResourceIcon(canvas, cx, cy, iconRadius, rp, density)
+        // 绘制玩家占领标记（支持多个玩家共享）
+        val tm = turnManager
+        if (tm != null) {
+            val owners = tm.getCellOwners(cell.x, cell.y)
+            if (owners.isNotEmpty()) {
+                drawOccupationMarkers(canvas, cx, cy, R, owners, density)
+            }
+        }
+
+        // 绘制资源点图标
+        if (rp != null) {
+            val iconRadius = R * 0.22f
+            // 有占领者时资源点偏上，无占领者时居中
+            val iconY = if (tm != null && tm.getCellOwners(cell.x, cell.y).isNotEmpty()) {
+                cy - R * 0.18f
+            } else {
+                cy
+            }
+            drawResourceIcon(canvas, cx, iconY, iconRadius, rp, density)
+        }
+    }
+
+    /**
+     * 绘制多个玩家占领标记
+     * 1个玩家：居中偏下
+     * 2个玩家：左右分布
+     */
+    private fun drawOccupationMarkers(
+        canvas: Canvas,
+        cx: Float, cy: Float,
+        R: Float,
+        owners: List<com.xfbgy.hexmap.game.Player>,
+        density: Float
+    ) {
+        val markerRadius = R * 0.17f
+
+        when (owners.size) {
+            1 -> {
+                // 单个玩家：居中偏下
+                drawSingleMarker(canvas, cx, cy + R * 0.22f, markerRadius, owners[0], density)
+            }
+            2 -> {
+                // 两个玩家：左右分布
+                val leftX = cx - R * 0.22f
+                val rightX = cx + R * 0.22f
+                val markerY = cy + R * 0.22f
+                drawSingleMarker(canvas, leftX, markerY, markerRadius, owners[0], density)
+                drawSingleMarker(canvas, rightX, markerY, markerRadius, owners[1], density)
+            }
+            else -> {
+                // 3个及以上：从左到右排列
+                val spacing = R * 0.35f
+                val startX = cx - (owners.size - 1) * spacing / 2f
+                for ((index, player) in owners.withIndex()) {
+                    drawSingleMarker(canvas, startX + index * spacing, cy + R * 0.22f, markerRadius, player, density)
+                }
+            }
+        }
+    }
+
+    /**
+     * 绘制单个玩家占领标记
+     */
+    private fun drawSingleMarker(
+        canvas: Canvas,
+        cx: Float, cy: Float,
+        markerRadius: Float,
+        player: com.xfbgy.hexmap.game.Player,
+        density: Float
+    ) {
+        // 半透明填充圆
+        val playerColor = parseColor(player.colorHex)
+        occupationFillPaint.color = playerColor
+        occupationFillPaint.alpha = 60
+        canvas.drawCircle(cx, cy, markerRadius, occupationFillPaint)
+
+        // 边框圆
+        occupationBorderPaint.color = playerColor
+        occupationBorderPaint.alpha = 200
+        canvas.drawCircle(cx, cy, markerRadius, occupationBorderPaint)
+
+        // 玩家编号文字
+        val textSize = markerRadius * 1.0f
+        occupationTextPaint.textSize = textSize
+        occupationTextPaint.alpha = 230
+        canvas.drawText("P${player.id}", cx, cy + textSize / 3, occupationTextPaint)
     }
 
     /**

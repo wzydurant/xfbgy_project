@@ -4,13 +4,19 @@ import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.xfbgy.hexmap.data.DebugHexMap
 import com.xfbgy.hexmap.data.FortType
 import com.xfbgy.hexmap.data.ResourcePointType
 import com.xfbgy.hexmap.data.TerrainType
+import com.xfbgy.hexmap.game.OccupyResult
+import com.xfbgy.hexmap.game.TurnManager
+import com.xfbgy.hexmap.game.WithdrawResult
 import com.xfbgy.hexmap.generation.DebugRiverGenerator
 import com.xfbgy.hexmap.generation.ResourcePointScanner
 import kotlin.math.sqrt
@@ -35,7 +41,11 @@ class GameActivity : AppCompatActivity() {
     private lateinit var mapGridView: GameMapGridView
     private lateinit var cellInfoPanel: TextView
     private lateinit var mapInfoBar: TextView
+    private lateinit var playerInfoBar: LinearLayout
+    private lateinit var turnInfoText: TextView
+    private lateinit var endTurnButton: Button
     private var currentMap: DebugHexMap? = null
+    private var turnManager: TurnManager? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +61,7 @@ class GameActivity : AppCompatActivity() {
     }
 
     /**
-     * 创建全屏布局：地图占满屏幕 + 底部信息栏 + 点击信息面板
+     * 创建全屏布局：地图占满屏幕 + 底部信息栏 + 玩家面板 + 结束回合按钮
      */
     private fun createLayout(): FrameLayout {
         val rootLayout = FrameLayout(this).apply {
@@ -64,7 +74,7 @@ class GameActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            onCellSelected = { x, y -> updateCellInfo(x, y) }
+            onCellSelected = { x, y -> onCellSelected(x, y) }
         }
         rootLayout.addView(mapGridView)
 
@@ -95,11 +105,99 @@ class GameActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.BOTTOM
+                bottomMargin = dpToPx(48)
             }
             text = "点击地图格子查看详细信息"
             visibility = View.GONE
         }
         rootLayout.addView(cellInfoPanel)
+
+        // 底部操作栏：玩家信息 + 结束回合按钮
+        val bottomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xCC000000.toInt())
+            setPadding(dpToPx(8), dpToPx(4), dpToPx(8), dpToPx(4))
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dpToPx(48)
+            ).apply {
+                gravity = Gravity.BOTTOM
+            }
+        }
+
+        // 玩家信息区域（点击查看玩家信息）
+        val playerInfoClickArea = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                1f
+            )
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { showPlayerInfoDialog() }
+
+            // 点击提示文字
+            playerInfoBar = LinearLayout(this@GameActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+
+            val hintText = TextView(this@GameActivity).apply {
+                text = "点击查看玩家信息"
+                textSize = 13f
+                setTextColor(0xFFB0B0B0.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                gravity = Gravity.CENTER
+            }
+            playerInfoBar.addView(hintText)
+            addView(playerInfoBar)
+        }
+        bottomBar.addView(playerInfoClickArea)
+
+        // 结束回合按钮
+        endTurnButton = Button(this).apply {
+            text = "结束回合"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0xFF1E90FF.toInt())
+            setPadding(dpToPx(12), dpToPx(2), dpToPx(12), dpToPx(2))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                dpToPx(36)
+            )
+            setOnClickListener { onEndTurnClicked() }
+        }
+        bottomBar.addView(endTurnButton)
+
+        rootLayout.addView(bottomBar)
+
+        // 回合信息（悬浮在右上方）
+        turnInfoText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(0xFFFF9800.toInt())
+            setBackgroundColor(0x80000000.toInt())
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dpToPx(28)
+                marginEnd = dpToPx(8)
+            }
+        }
+        rootLayout.addView(turnInfoText)
 
         return rootLayout
     }
@@ -254,9 +352,15 @@ class GameActivity : AppCompatActivity() {
         }.joinToString(" ")
 
         mapInfoBar.text = "${size}×${size}(${totalCells}格) | $terrainStats | 河流${riverCount}条(${riverEdgeCount}边) | 工事${fortCount}边 | 资源[$resourceStats]"
+
+        // 初始化回合管理器
+        initTurnManager()
     }
 
-    private fun updateCellInfo(x: Int, y: Int) {
+    /**
+     * 格子选中回调
+     */
+    private fun onCellSelected(x: Int, y: Int) {
         val m = currentMap
         if (m == null || x < 0 || y < 0) {
             cellInfoPanel.visibility = View.GONE
@@ -273,6 +377,17 @@ class GameActivity : AppCompatActivity() {
         if (rp != null) {
             sb.append("  |  ${rp.getDescription()}")
         }
+
+        // 显示占领者信息（支持多玩家共享）
+        val tm = turnManager
+        if (tm != null) {
+            val owners = tm.getCellOwners(x, y)
+            if (owners.isNotEmpty()) {
+                sb.append("  |  已占领: ${owners.joinToString(", ") { it.name }}")
+            } else {
+                sb.append("  |  未占领")
+            }
+        }
         sb.append("\n")
 
         val dirNames = arrayOf("1-顶边", "2-右上", "3-右下", "4-底边", "5-左下", "6-左上")
@@ -288,6 +403,221 @@ class GameActivity : AppCompatActivity() {
 
         sb.append(edgeDescs.joinToString("  "))
         cellInfoPanel.text = sb.toString()
+
+        // 弹出占领确认弹窗
+        if (tm != null) {
+            showOccupyDialog(x, y)
+        }
+    }
+
+    /**
+     * 初始化回合管理器
+     */
+    private fun initTurnManager() {
+        val m = currentMap ?: return
+        turnManager = TurnManager(m).also { tm ->
+            mapGridView.turnManager = tm
+
+            tm.onTurnChanged = { player, turn ->
+                runOnUiThread {
+                    updatePlayerInfoBar()
+                    updateTurnInfo()
+                }
+            }
+
+            tm.onOccupationChanged = { _, _, _ ->
+                runOnUiThread {
+                    updatePlayerInfoBar()
+                    mapGridView.invalidate()
+                }
+            }
+        }
+
+        updatePlayerInfoBar()
+        updateTurnInfo()
+    }
+
+    /**
+     * 显示格子操作弹窗（占领/撤出/共享占领）
+     */
+    private fun showOccupyDialog(x: Int, y: Int) {
+        val tm = turnManager ?: return
+        val m = currentMap ?: return
+        if (!m.isValidCell(x, y)) return
+
+        val cell = m.cells[x][y]
+        val currentPlayer = tm.getCurrentPlayer()
+        val owners = tm.getCellOwners(x, y)
+
+        val cellDesc = "($x,$y) ${cell.terrain.chineseName}"
+        val rpDesc = cell.resourcePoint?.let { " | ${it.getDescription()}" } ?: ""
+
+        when {
+            // 情况1：当前玩家已占领 → 弹出"是否撤出"
+            owners.any { it.id == currentPlayer.id } -> {
+                val clusterInfo = cell.resourcePoint?.let { rp ->
+                    if (rp.type == ResourcePointType.CITY) "（都市聚团将一并撤出）" else ""
+                } ?: ""
+                AlertDialog.Builder(this)
+                    .setTitle("是否撤出")
+                    .setMessage("${currentPlayer.name} 是否撤出 $cellDesc$rpDesc ？$clusterInfo")
+                    .setPositiveButton("是") { _, _ ->
+                        val result = tm.withdrawCell(x, y)
+                        when (result) {
+                            is WithdrawResult.Success -> {
+                                updateCellInfoAfterWithdraw(x, y)
+                            }
+                            is WithdrawResult.NotOwned -> {}
+                            is WithdrawResult.InvalidCell -> {}
+                        }
+                    }
+                    .setNegativeButton("否", null)
+                    .show()
+            }
+
+            // 情况2：未被占领 → 弹出"是否占领"
+            owners.isEmpty() -> {
+                AlertDialog.Builder(this)
+                    .setTitle("是否占领")
+                    .setMessage("${currentPlayer.name} 是否占领 $cellDesc$rpDesc ？")
+                    .setPositiveButton("是") { _, _ ->
+                        val result = tm.occupyCell(x, y)
+                        handleOccupyResult(result, currentPlayer, x, y)
+                    }
+                    .setNegativeButton("否", null)
+                    .show()
+            }
+
+            // 情况3：被对方占领（但当前玩家未占领） → 弹出"是否占领"（共享）
+            else -> {
+                val existingNames = owners.joinToString(", ") { it.name }
+                val clusterInfo = cell.resourcePoint?.let { rp ->
+                    if (rp.type == ResourcePointType.CITY) "（都市聚团将一并占领）" else ""
+                } ?: ""
+                AlertDialog.Builder(this)
+                    .setTitle("是否占领")
+                    .setMessage("${currentPlayer.name} 是否占领 $cellDesc$rpDesc ？\n当前占领者: $existingNames（共享占领）$clusterInfo")
+                    .setPositiveButton("是") { _, _ ->
+                        val result = tm.occupyCell(x, y)
+                        handleOccupyResult(result, currentPlayer, x, y)
+                    }
+                    .setNegativeButton("否", null)
+                    .show()
+            }
+        }
+    }
+
+    /**
+     * 处理占领/共享占领结果
+     */
+    private fun handleOccupyResult(result: OccupyResult, currentPlayer: com.xfbgy.hexmap.game.Player, x: Int, y: Int) {
+        when (result) {
+            is OccupyResult.Success -> {
+                updateCellInfoAfterOccupy(currentPlayer, x, y)
+            }
+            is OccupyResult.SharedOccupation -> {
+                updateCellInfoAfterOccupy(currentPlayer, x, y)
+            }
+            is OccupyResult.AlreadyOwned -> {}
+            is OccupyResult.InvalidCell -> {}
+        }
+    }
+
+    /**
+     * 占领后更新信息面板
+     */
+    private fun updateCellInfoAfterOccupy(currentPlayer: com.xfbgy.hexmap.game.Player, x: Int, y: Int) {
+        cellInfoPanel.visibility = View.VISIBLE
+        val tm = turnManager ?: return
+        val owners = tm.getCellOwners(x, y)
+        val text = cellInfoPanel.text.toString()
+        val ownersText = if (owners.isNotEmpty()) "已占领: ${owners.joinToString(", ") { it.name }}" else "未占领"
+        cellInfoPanel.text = text.replace(Regex("未占领|已占领: [^\\s]+"), ownersText)
+    }
+
+    /**
+     * 撤出后更新信息面板
+     */
+    private fun updateCellInfoAfterWithdraw(x: Int, y: Int) {
+        cellInfoPanel.visibility = View.VISIBLE
+        val tm = turnManager ?: return
+        val owners = tm.getCellOwners(x, y)
+        val text = cellInfoPanel.text.toString()
+        val ownersText = if (owners.isNotEmpty()) "已占领: ${owners.joinToString(", ") { it.name }}" else "未占领"
+        cellInfoPanel.text = text.replace(Regex("未占领|已占领: [^\\s]+"), ownersText)
+    }
+
+    /**
+     * 结束回合按钮点击
+     */
+    private fun onEndTurnClicked() {
+        val tm = turnManager ?: return
+        val nextPlayer = tm.endTurn()
+        cellInfoPanel.visibility = View.GONE
+    }
+
+    /**
+     * 更新玩家信息面板（底部栏提示文字）
+     */
+    private fun updatePlayerInfoBar() {
+        val tm = turnManager ?: return
+        val currentPlayer = tm.getCurrentPlayer()
+        // 更新底部提示文字，显示当前玩家
+        if (playerInfoBar.childCount > 0) {
+            val hintText = playerInfoBar.getChildAt(0) as? TextView
+            hintText?.text = "▸ ${currentPlayer.name} | 点击查看详情"
+            hintText?.setTextColor(parsePlayerColor(currentPlayer.colorHex))
+        }
+    }
+
+    /**
+     * 显示玩家信息弹窗
+     */
+    private fun showPlayerInfoDialog() {
+        val tm = turnManager ?: return
+        val currentPlayer = tm.getCurrentPlayer()
+
+        val sb = StringBuilder()
+        sb.appendLine("── 当前玩家: ${currentPlayer.name} ──")
+        sb.appendLine()
+
+        val resourceCounts = tm.getOccupiedResourceCounts(currentPlayer.id)
+        val totalCells = tm.getOccupiedCellCount(currentPlayer.id)
+        val totalResources = tm.getOccupiedResourceCount(currentPlayer.id)
+
+        sb.appendLine("占领格子数: $totalCells")
+        sb.appendLine("资源点总数: $totalResources")
+        sb.appendLine()
+
+        if (resourceCounts.entries.any { it.value > 0 }) {
+            sb.appendLine("资源详情:")
+            for (entry in resourceCounts.entries.filter { it.value > 0 }) {
+                sb.appendLine("  ${entry.key.iconLabel} ${entry.key.chineseName}: ${entry.value}")
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("玩家信息")
+            .setMessage(sb.toString().trimEnd())
+            .setPositiveButton("确定", null)
+            .show()
+    }
+
+    /**
+     * 更新回合信息
+     */
+    private fun updateTurnInfo() {
+        val tm = turnManager ?: return
+        val currentPlayer = tm.getCurrentPlayer()
+        turnInfoText.text = "第${tm.turnNumber}回合 | ${currentPlayer.name}"
+    }
+
+    private fun parsePlayerColor(colorHex: String): Int {
+        return try {
+            Color.parseColor(colorHex)
+        } catch (e: Exception) {
+            Color.WHITE
+        }
     }
 
     private fun dpToPx(dp: Int): Int {
