@@ -11,10 +11,13 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.xfbgy.hexmap.data.DebugHexMap
+import com.xfbgy.hexmap.data.EquipmentType
 import com.xfbgy.hexmap.data.FortType
+import com.xfbgy.hexmap.data.ResourceKind
 import com.xfbgy.hexmap.data.ResourcePointType
 import com.xfbgy.hexmap.data.TerrainType
 import com.xfbgy.hexmap.game.OccupyResult
+import com.xfbgy.hexmap.game.ResourceManager
 import com.xfbgy.hexmap.game.TurnManager
 import com.xfbgy.hexmap.game.WithdrawResult
 import com.xfbgy.hexmap.generation.DebugRiverGenerator
@@ -44,8 +47,13 @@ class GameActivity : AppCompatActivity() {
     private lateinit var playerInfoBar: LinearLayout
     private lateinit var turnInfoText: TextView
     private lateinit var endTurnButton: Button
+    private lateinit var resourceBarView: ResourceBarView
     private var currentMap: DebugHexMap? = null
     private var turnManager: TurnManager? = null
+    private var resourceManager: ResourceManager? = null
+
+    /** 是否处于"确认"阶段（结算后等待确认再换人） */
+    private var isWaitingConfirm = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -198,6 +206,20 @@ class GameActivity : AppCompatActivity() {
             }
         }
         rootLayout.addView(turnInfoText)
+
+        // 资源条（悬浮在右上方，回合信息下方）
+        resourceBarView = ResourceBarView(this).apply {
+            setBackgroundColor(0x80000000.toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+                topMargin = dpToPx(56)
+                marginEnd = dpToPx(8)
+            }
+        }
+        rootLayout.addView(resourceBarView)
 
         return rootLayout
     }
@@ -415,19 +437,30 @@ class GameActivity : AppCompatActivity() {
      */
     private fun initTurnManager() {
         val m = currentMap ?: return
+
+        // 初始化资源管理器
+        resourceManager = ResourceManager(m).also { rm ->
+            rm.scanMap()
+        }
+
         turnManager = TurnManager(m).also { tm ->
             mapGridView.turnManager = tm
+
+            // 关联资源管理器
+            tm.resourceManager = resourceManager
 
             tm.onTurnChanged = { player, turn ->
                 runOnUiThread {
                     updatePlayerInfoBar()
                     updateTurnInfo()
+                    updateResourceBar()
                 }
             }
 
             tm.onOccupationChanged = { _, _, _ ->
                 runOnUiThread {
                     updatePlayerInfoBar()
+                    updateResourceBar()
                     mapGridView.invalidate()
                 }
             }
@@ -435,6 +468,7 @@ class GameActivity : AppCompatActivity() {
 
         updatePlayerInfoBar()
         updateTurnInfo()
+        updateResourceBar()
     }
 
     /**
@@ -549,11 +583,60 @@ class GameActivity : AppCompatActivity() {
 
     /**
      * 结束回合按钮点击
+     *
+     * 两步流程：
+     * 1. 点击"结束回合" → 执行生产结算 → 按钮变为"确认"
+     * 2. 点击"确认" → 切换到对手回合
      */
     private fun onEndTurnClicked() {
+        if (isWaitingConfirm) {
+            // 第二步：确认换人
+            onConfirmTurnSwitch()
+        } else {
+            // 第一步：结束回合 → 执行生产结算
+            onEndTurnSettle()
+        }
+    }
+
+    /**
+     * 第一步：结束回合，执行当前玩家的生产结算
+     */
+    private fun onEndTurnSettle() {
         val tm = turnManager ?: return
-        val nextPlayer = tm.endTurn()
+        val rm = resourceManager ?: return
+
+        // 每个玩家结束回合时，结算该玩家的资源生产
+        val currentFaction = tm.getCurrentPlayer().id
+        rm.processRoundEnd(tm.turnNumber, currentFaction)
+
+        // 进入确认阶段
+        isWaitingConfirm = true
+        endTurnButton.text = "确认"
+        endTurnButton.setBackgroundColor(0xFF4CAF50.toInt()) // 绿色确认按钮
+
+        // 更新资源条显示结算结果
+        updateResourceBar()
+        updateTurnInfo()
+
         cellInfoPanel.visibility = View.GONE
+    }
+
+    /**
+     * 第二步：确认后切换到对手回合
+     */
+    private fun onConfirmTurnSwitch() {
+        val tm = turnManager ?: return
+
+        tm.endTurn()
+
+        // 退出确认阶段
+        isWaitingConfirm = false
+        endTurnButton.text = "结束回合"
+        endTurnButton.setBackgroundColor(0xFF1E90FF.toInt()) // 蓝色结束按钮
+
+        updatePlayerInfoBar()
+        updateTurnInfo()
+        updateResourceBar()
     }
 
     /**
@@ -575,6 +658,7 @@ class GameActivity : AppCompatActivity() {
      */
     private fun showPlayerInfoDialog() {
         val tm = turnManager ?: return
+        val rm = resourceManager ?: return
         val currentPlayer = tm.getCurrentPlayer()
 
         val sb = StringBuilder()
@@ -594,6 +678,28 @@ class GameActivity : AppCompatActivity() {
             for (entry in resourceCounts.entries.filter { it.value > 0 }) {
                 sb.appendLine("  ${entry.key.iconLabel} ${entry.key.chineseName}: ${entry.value}")
             }
+            sb.appendLine()
+        }
+
+        // 显示资源储存
+        val resourceTotals = rm.getPlayerResourceTotals(currentPlayer.id)
+        val equipTotals = rm.getPlayerEquipTotals(currentPlayer.id)
+        val hasResources = resourceTotals.any { it.value > 0 } || equipTotals.any { it.value > 0 }
+
+        if (hasResources) {
+            sb.appendLine("资源储存:")
+            for ((kind, count) in resourceTotals) {
+                if (count > 0 && kind != ResourceKind.FOOD) {
+                    sb.appendLine("  ${kind.icon} ${kind.chineseName}: $count")
+                }
+            }
+            val equipParts = equipTotals.filter { it.value > 0 }.map { "  ${it.key.chineseName}×${it.value}" }
+            if (equipParts.isNotEmpty()) {
+                sb.appendLine("装备:")
+                for (part in equipParts) {
+                    sb.appendLine(part)
+                }
+            }
         }
 
         AlertDialog.Builder(this)
@@ -610,6 +716,19 @@ class GameActivity : AppCompatActivity() {
         val tm = turnManager ?: return
         val currentPlayer = tm.getCurrentPlayer()
         turnInfoText.text = "第${tm.turnNumber}回合 | ${currentPlayer.name}"
+    }
+
+    /**
+     * 更新资源条显示
+     */
+    private fun updateResourceBar() {
+        val rm = resourceManager ?: return
+        val tm = turnManager ?: return
+        val currentPlayer = tm.getCurrentPlayer()
+        val resourceTotals = rm.getPlayerResourceTotals(currentPlayer.id)
+        val equipTotals = rm.getPlayerEquipTotals(currentPlayer.id)
+        val foodSummary = rm.getLastRoundFoodSummary(currentPlayer.id)
+        resourceBarView.updateResources(resourceTotals, equipTotals, foodSummary)
     }
 
     private fun parsePlayerColor(colorHex: String): Int {

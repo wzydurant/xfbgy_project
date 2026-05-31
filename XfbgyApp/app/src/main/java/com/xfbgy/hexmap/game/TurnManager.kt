@@ -79,6 +79,9 @@ class TurnManager(
     /** 占领变更监听器 */
     var onOccupationChanged: ((x: Int, y: Int, player: Player?) -> Unit)? = null
 
+    /** 资源管理器（由外部设置） */
+    var resourceManager: ResourceManager? = null
+
     /** 都市聚团映射：格子坐标 -> 同一聚团的所有格子坐标列表 */
     private val cityClusterMap: Map<Pair<Int, Int>, List<Pair<Int, Int>>>
 
@@ -104,6 +107,8 @@ class TurnManager(
     /**
      * 结束当前回合，切换到下一个玩家
      *
+     * 注意：资源结算由外部（GameActivity）在调用 endTurn() 之前手动触发
+     *
      * @return 切换后的当前玩家
      */
     fun endTurn(): Player {
@@ -115,6 +120,12 @@ class TurnManager(
         onTurnChanged?.invoke(currentPlayer, turnNumber)
         return currentPlayer
     }
+
+    /**
+     * 判断当前玩家是否为回合中最后一个行动的玩家
+     * （即调用endTurn后回合数会+1）
+     */
+    fun isLastPlayerInRound(): Boolean = currentPlayerIndex == players.size - 1
 
     /**
      * 尝试占领指定格子（共享占领）
