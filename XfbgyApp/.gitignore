@@ -1,0 +1,39 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# 屏蔽所有 build 生成产物
+build/
+*/build/
+**/build/
+
+# Gradle 缓存
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletaskname
+
+# 本地配置
+local.properties
+
+# Android Studio / IDE 配置
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+.cxx/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
